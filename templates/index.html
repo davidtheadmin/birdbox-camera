@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>birdcam</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128038;</text></svg>">
+</head>
+<body>
+
+<header>
+  <h1>&#128038; birdcam</h1>
+  <div id="statusbar">
+    <span class="chip" id="chip-uptime" title="Pi uptime">&#8987; –</span>
+    <span class="chip" id="chip-temp" title="CPU temperature">&#127777;&#65039; –</span>
+    <span class="chip" id="chip-wifi" title="Wifi signal">&#128246; –</span>
+    <span class="chip" id="chip-disk" title="Free disk space">&#128190; –</span>
+    <span class="chip rec-chip hidden" id="chip-rec">&#9210; REC –</span>
+    <span class="chip mock-chip hidden" id="chip-mock" title="Hardware/camera simulated">MOCK</span>
+  </div>
+</header>
+
+<main>
+  <!-- live video -->
+  <section class="card video-card">
+    <div class="video-wrap">
+      <img id="stream" src="/stream" alt="live camera stream">
+      <div id="rec-overlay" class="hidden"><span class="rec-dot"></span><span id="rec-time">0:00</span></div>
+    </div>
+    <div class="controls">
+      <button id="btn-snapshot">&#128247; Snapshot</button>
+      <button id="btn-record">&#9210; Record</button>
+    </div>
+  </section>
+
+  <div class="side">
+    <!-- LED control -->
+    <section class="card">
+      <h2>Lights</h2>
+      <div class="led-row">
+        <div class="segmented" id="mode-toggle">
+          <button data-mode="auto" class="active">Auto</button>
+          <button data-mode="manual">Manual</button>
+        </div>
+        <div class="led-stats">
+          <div class="stat"><span class="stat-value" id="led-brightness">–</span><span class="stat-label">LED brightness</span></div>
+          <div class="stat"><span class="stat-value" id="light-level">–</span><span class="stat-label">light level</span></div>
+        </div>
+      </div>
+      <div class="slider-row">
+        <input type="range" id="brightness-slider" min="0" max="100" step="1" value="0" disabled>
+        <span id="slider-value" class="muted">–</span>
+      </div>
+    </section>
+
+    <!-- sensor graph -->
+    <section class="card">
+      <div class="graph-head">
+        <h2>Sensor history</h2>
+        <div class="segmented small" id="range-toggle">
+          <button data-seconds="3600" class="active">1h</button>
+          <button data-seconds="10800">3h</button>
+          <button data-seconds="21600">6h</button>
+        </div>
+      </div>
+      <div id="graphs">
+        <div class="panel">
+          <div class="panel-title"><span class="chipdot" style="background:var(--series-1)"></span>Light level <span class="muted">(higher = darker)</span></div>
+          <svg id="graph-level" preserveAspectRatio="none"></svg>
+        </div>
+        <div class="panel">
+          <div class="panel-title"><span class="chipdot" style="background:var(--series-2)"></span>LED brightness %</div>
+          <svg id="graph-bright" preserveAspectRatio="none"></svg>
+        </div>
+        <div id="graph-tooltip" class="hidden"></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- gallery -->
+  <section class="card wide">
+    <div class="graph-head">
+      <h2>Gallery</h2>
+      <span class="muted" id="gallery-disk"></span>
+    </div>
+    <div id="gallery" class="gallery-grid"><span class="muted">loading…</span></div>
+  </section>
+
+  <!-- settings -->
+  <details class="card wide" id="settings">
+    <summary><h2>Settings</h2></summary>
+    <form id="settings-form">
+      <fieldset>
+        <legend>LED / sensor</legend>
+        <label>Level min (bright &rarr; LEDs off) <input name="level_min" type="number" min="0" max="100000"></label>
+        <label>Level max (dark &rarr; max bright) <input name="level_max" type="number" min="0" max="100000"></label>
+        <label>Max brightness % <input name="max_bright" type="number" min="0" max="100"></label>
+        <label>Smoothing (0&ndash;1) <input name="smooth" type="number" step="0.05" min="0.01" max="1"></label>
+        <label>Sensor interval (s) <input name="sensor_interval" type="number" step="0.5" min="0.5" max="60"></label>
+      </fieldset>
+      <fieldset>
+        <legend>Stream <span class="muted">(applying restarts the camera briefly)</span></legend>
+        <label>Width <input name="stream_width" type="number" min="160" max="4608"></label>
+        <label>Height <input name="stream_height" type="number" min="120" max="2592"></label>
+        <label>Framerate <input name="stream_fps" type="number" min="1" max="30"></label>
+        <label>JPEG quality <input name="stream_quality" type="number" min="10" max="100"></label>
+      </fieldset>
+      <div class="controls">
+        <button type="submit">Save</button>
+        <span id="settings-msg" class="muted"></span>
+      </div>
+    </form>
+  </details>
+</main>
+
+<!-- media viewer modal -->
+<div id="modal" class="hidden">
+  <div id="modal-body">
+    <img id="modal-img" alt="">
+    <div id="modal-caption" class="muted"></div>
+  </div>
+</div>
+
+<div id="toast" class="hidden"></div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
