@@ -1,24 +1,45 @@
-from gpiozero import LED, LightSensor
-from signal import pause
+import RPi.GPIO as GPIO
+import time
 
-# GPIO17 drives the transistor switch controlling the 6 IR LEDs
-ir_lights = LED(17)
+LDR_PIN = 18
+IR_PIN = 17
 
-# GPIO18 reads the LDR + capacitor light sensor
-# threshold: how bright is "light" vs "dark" (0.0-1.0 scale, tune if needed)
-# queue_len: averages several readings together to smooth out noisy transitions
-sensor = LightSensor(18, queue_len=5, threshold=0.1, charge_time_limit = 1)
+LEVEL_MIN = 800     # this bright or brighter -> LEDs fully off
+LEVEL_MAX = 4000    # this dark or darker -> LEDs at MAX_BRIGHT
+MAX_BRIGHT = 80     # cap duty cycle, tune on the camera image
+SMOOTH = 0.3        # 0-1, higher = reacts faster, lower = smoother
 
-# React to light level changes as they happen
-sensor.when_dark = ir_lights.on
-sensor.when_light = ir_lights.off
+GPIO.setwarnings(False)
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(IR_PIN, GPIO.OUT)
+pwm = GPIO.PWM(IR_PIN, 1000)
+pwm.start(0)
 
-# Set the correct starting state immediately, rather than waiting
-# for the next light/dark transition to happen
-if sensor.value > sensor.threshold:
-    ir_lights.off()
-else:
-    ir_lights.on()
+def read_ldr():
+    count = 0
+    GPIO.setup(LDR_PIN, GPIO.OUT)
+    GPIO.output(LDR_PIN, GPIO.LOW)
+    time.sleep(0.3)
+    GPIO.setup(LDR_PIN, GPIO.IN)
+    while GPIO.input(LDR_PIN) == GPIO.LOW and count < 100000:
+        count += 1
+    return count
 
-# Keep the script running so it keeps reacting to sensor events
-pause()
+def level_to_brightness(level):
+    if level <= LEVEL_MIN:
+        return 0
+    if level >= LEVEL_MAX:
+        return MAX_BRIGHT
+    return MAX_BRIGHT * (level - LEVEL_MIN) / (LEVEL_MAX - LEVEL_MIN)
+
+current = 0.0
+try:
+    while True:
+        level = read_ldr()
+        target = level_to_brightness(level)
+        current += (target - current) * SMOOTH
+        pwm.ChangeDutyCycle(current)
+        print(f"level: {level:5d}  ->  brightness: {current:5.1f}%")
+except KeyboardInterrupt:
+    pwm.stop()
+    GPIO.cleanup()
