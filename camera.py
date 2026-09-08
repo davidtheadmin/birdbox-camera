@@ -31,6 +31,10 @@ def is_mock():
     return bool(os.environ.get("BIRDCAM_MOCK")) or shutil.which("rpicam-vid") is None
 
 
+def has_ffmpeg():
+    return shutil.which("ffmpeg") is not None
+
+
 class CameraManager:
     """Owns the camera process, the latest frame, and recording state."""
 
@@ -51,6 +55,9 @@ class CameraManager:
         self._rec_path = None
         self._rec_started = None
         self._rec_frames = 0
+
+        self._transcoding = set()   # .mjpeg names currently being converted to .mp4
+        self._transcode_lock = threading.Lock()
 
         self._thread = threading.Thread(target=self._run, name="camera", daemon=True)
 
@@ -168,11 +175,69 @@ class CameraManager:
                 "width": self.config["stream_width"],
                 "height": self.config["stream_height"],
             }
-            self._rec_path.with_suffix(".json").write_text(json.dumps(meta))
-            name = self._rec_path.name
+            rec_path = self._rec_path
+            rec_path.with_suffix(".json").write_text(json.dumps(meta))
+            name = rec_path.name
             self._rec_file = None
             self._rec_path = None
-            return name, meta
+        # Transcode to MP4 off the hot path (no-op if format is mjpeg / no ffmpeg).
+        self._maybe_transcode(rec_path, meta)
+        return name, meta
+
+    # --- mp4 transcode (background) ---
+
+    def transcoding_names(self):
+        with self._transcode_lock:
+            return set(self._transcoding)
+
+    def _maybe_transcode(self, mjpeg_path, meta):
+        if self.config["recording_format"] != "mp4" or not has_ffmpeg():
+            return
+        with self._transcode_lock:
+            self._transcoding.add(mjpeg_path.name)
+        threading.Thread(target=self._transcode_worker, args=(mjpeg_path, meta),
+                         name="transcode", daemon=True).start()
+
+    def _transcode_worker(self, mjpeg_path, meta):
+        """mjpeg -> H.264 mp4. Tries the Pi hardware encoder, falls back to
+        software libx264. On success the .mjpeg is replaced by the .mp4."""
+        fps = meta.get("fps") or self.config["stream_fps"] or 15
+        mp4_path = mjpeg_path.with_suffix(".mp4")
+        tmp = mjpeg_path.with_suffix(".mp4.tmp")
+        head = ["ffmpeg", "-y", "-loglevel", "error",
+                "-f", "mjpeg", "-r", str(fps), "-i", str(mjpeg_path)]
+        tail = ["-pix_fmt", "yuv420p", "-movflags", "+faststart", "-f", "mp4", str(tmp)]
+        attempts = [
+            ["-c:v", "h264_v4l2m2m", "-b:v", "4M"],                 # Pi hardware encoder
+            ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"],  # software fallback
+        ]
+        ok = False
+        for enc in attempts:
+            try:
+                r = subprocess.run(head + enc + tail,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError:
+                break
+            if r.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
+                ok = True
+                break
+            if tmp.exists():
+                tmp.unlink()
+        if ok:
+            tmp.replace(mp4_path)
+            meta = dict(meta, container="mp4")
+            mp4_path.with_suffix(".json").write_text(json.dumps(meta))
+            try:
+                mjpeg_path.unlink()  # sidecar has the shared stem, so it stays
+            except OSError:
+                pass
+            print(f"[camera] transcoded {mjpeg_path.name} -> {mp4_path.name}")
+        else:
+            if tmp.exists():
+                tmp.unlink()
+            print(f"[camera] mp4 transcode failed for {mjpeg_path.name}; kept mjpeg")
+        with self._transcode_lock:
+            self._transcoding.discard(mjpeg_path.name)
 
     # --- replay of saved .mjpeg recordings ---
 
@@ -208,6 +273,20 @@ class CameraManager:
                     if end >= 0:
                         return bytes(buf[start:end + 2])
 
+    @staticmethod
+    def mp4_thumbnail(path):
+        """Extract the first frame of an mp4 as JPEG bytes via ffmpeg."""
+        if shutil.which("ffmpeg") is None:
+            return None
+        try:
+            r = subprocess.run(
+                ["ffmpeg", "-loglevel", "error", "-i", str(path),
+                 "-frames:v", "1", "-f", "mjpeg", "pipe:1"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except OSError:
+            return None
+        return r.stdout or None
+
     def replay_stream(self, path, fps):
         interval = 1.0 / max(fps, 1)
         for frame in self.iter_recorded_frames(path):
@@ -226,7 +305,7 @@ class CameraManager:
             self._run_real()
 
     def _rpicam_cmd(self):
-        return [
+        cmd = [
             "rpicam-vid",
             "-t", "0",
             "--codec", "mjpeg",
@@ -236,8 +315,21 @@ class CameraManager:
             "--quality", str(self.config["stream_quality"]),
             "--nopreview",
             "--flush",
-            "-o", "-",
         ]
+        # Orientation: both flags together == 180° rotation (upside-down mount).
+        if self.config["flip_h"]:
+            cmd.append("--hflip")
+        if self.config["flip_v"]:
+            cmd.append("--vflip")
+        # Focus (Camera Module 3 has a motorised lens; ignored by fixed-focus modules).
+        if self.config["af_mode"] == "manual":
+            cmd += ["--autofocus-mode", "manual",
+                    "--lens-position", str(self.config["lens_position"])]
+        else:
+            cmd += ["--autofocus-mode", "continuous",
+                    "--autofocus-range", str(self.config["af_range"])]
+        cmd += ["-o", "-"]
+        return cmd
 
     def _run_real(self):
         while not self._stop.is_set():
@@ -303,6 +395,10 @@ class CameraManager:
                 d.ellipse([bx + 14, by - 34, bx + 40, by - 8], fill=(130, 100, 70))
                 d.text((10, 10), time.strftime("%Y-%m-%d %H:%M:%S")
                        + "  [MOCK CAMERA]", fill=(200, 200, 200))
+                if self.config["flip_h"]:
+                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                if self.config["flip_v"]:
+                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
                 out = io.BytesIO()
                 img.save(out, "JPEG", quality=self.config["stream_quality"])
                 self._publish(out.getvalue())

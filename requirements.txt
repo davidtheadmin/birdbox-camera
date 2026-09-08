@@ -1,3 +1,5 @@
 flask>=3.0
-# Optional, dev laptop only: animated mock camera frames
-# pillow
+pillow>=10.0   # required on the Pi for motion detection (and the dev mock camera)
+
+# System packages (not pip):
+#   ffmpeg  — required for MP4 recordings; without it, recordings stay MJPEG

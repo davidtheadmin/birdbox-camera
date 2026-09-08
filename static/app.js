@@ -50,6 +50,7 @@ async function pollStatus() {
     $("chip-mock").classList.toggle("hidden", !(s.mock.gpio || s.mock.camera));
     updateLed(s.led);
     updateRec(s.recording);
+    updateMotion(s.motion);
   } catch (e) { /* transient; keep last values */ }
 }
 
@@ -95,6 +96,24 @@ $("btn-snapshot").onclick = async () => {
   } catch (e) { toast("Error: " + e.message); }
 };
 
+// ---------- system power ----------
+
+$("btn-reboot").onclick = async () => {
+  if (!confirm("Restart the Pi now? The camera stream will drop and come back in ~30–60 s.")) return;
+  try {
+    const r = await api("/api/system/reboot", "POST");
+    toast(r.mock ? "Reboot (mock — nothing happens in dev)" : "Rebooting… the page will reconnect shortly.");
+  } catch (e) { toast("Error: " + e.message); }
+};
+
+$("btn-shutdown").onclick = async () => {
+  if (!confirm("Shut down the Pi now? It will power off and you'll have to power-cycle it by hand to bring it back.")) return;
+  try {
+    const r = await api("/api/system/shutdown", "POST");
+    toast(r.mock ? "Shutdown (mock — nothing happens in dev)" : "Shutting down… you can close this tab.");
+  } catch (e) { toast("Error: " + e.message); }
+};
+
 // ---------- LED control ----------
 
 const slider = $("brightness-slider");
@@ -137,6 +156,53 @@ slider.addEventListener("change", async () => {
   try { updateLed(await api("/api/led", "POST", { brightness: +slider.value })); }
   catch (e) { toast("Error: " + e.message); }
 });
+
+// ---------- motion detection ----------
+
+const motionSens = $("motion-sensitivity");
+let motionSensBusy = false;
+
+function updateMotion(m) {
+  if (!m) return;
+  document.querySelectorAll("#motion-toggle button").forEach(b =>
+    b.classList.toggle("active", (b.dataset.on === "1") === m.enabled));
+
+  // meter: activity fill + threshold marker, scaled so the threshold sits mid-ish
+  const scale = Math.max(0.05, m.threshold * 3);
+  const pct = v => Math.min(100, (v / scale) * 100);
+  const bar = $("motion-bar");
+  bar.style.width = pct(m.activity).toFixed(0) + "%";
+  bar.classList.toggle("hot", m.activity > m.threshold);
+  $("motion-thresh").style.left = pct(m.threshold).toFixed(0) + "%";
+
+  $("motion-status").textContent =
+    !m.available ? "unavailable — install Pillow on the Pi"
+    : !m.enabled ? "off"
+    : m.recording ? "motion detected — recording"
+    : "armed";
+
+  if (!motionSensBusy && document.activeElement !== motionSens)
+    motionSens.value = m.sensitivity;
+}
+
+document.querySelectorAll("#motion-toggle button").forEach(btn => {
+  btn.onclick = async () => {
+    try { updateMotion(await api("/api/motion", "POST", { enabled: btn.dataset.on === "1" })); }
+    catch (e) { toast("Error: " + e.message); }
+  };
+});
+
+let motionSensTimer = null;
+motionSens.addEventListener("input", () => {
+  motionSensBusy = true;
+  if (!motionSensTimer) {
+    motionSensTimer = setTimeout(async () => {
+      motionSensTimer = null;
+      try { await api("/api/motion", "POST", { sensitivity: +motionSens.value }); } catch (e) {}
+    }, 200);
+  }
+});
+motionSens.addEventListener("change", () => { motionSensBusy = false; });
 
 // ---------- sensor history graphs ----------
 
@@ -294,14 +360,19 @@ async function loadGallery() {
       const div = document.createElement("div");
       div.className = "gitem";
       const dur = item.duration ? ` · ${item.duration.toFixed(0)}s` : "";
+      const badge = item.processing ? '<span class="badge-video">converting…</span>'
+        : item.type === "mp4" ? '<span class="badge-video">▶ mp4</span>'
+        : item.type === "mjpeg" ? '<span class="badge-video">▶ mjpeg</span>'
+        : "";
       div.innerHTML =
         `<div class="gthumb"><img loading="lazy" src="/thumb/${encodeURIComponent(item.name)}" alt="${item.name}">` +
-        (item.type === "video" ? '<span class="badge-video">▶ video</span>' : "") + `</div>` +
+        badge + `</div>` +
         `<div class="gmeta">${fmtDate(item.mtime)}<span class="muted">${fmtBytes(item.size)}${dur}</span></div>` +
         `<div class="gactions">` +
         `<a href="/media/${encodeURIComponent(item.name)}?download=1">download</a>` +
         `<button class="danger">delete</button></div>`;
-      div.querySelector("img").onclick = () => openModal(item);
+      if (item.processing) div.classList.add("processing");
+      else div.querySelector("img").onclick = () => openModal(item);
       div.querySelector(".danger").onclick = async () => {
         if (!confirm(`Delete ${item.name}?`)) return;
         try { await api(`/api/media/${encodeURIComponent(item.name)}`, "DELETE"); loadGallery(); }
@@ -315,17 +386,28 @@ async function loadGallery() {
 }
 
 function openModal(item) {
-  const img = $("modal-img");
-  img.src = item.type === "video"
-    ? `/replay/${encodeURIComponent(item.name)}`
-    : `/media/${encodeURIComponent(item.name)}`;
-  $("modal-caption").textContent = item.name +
-    (item.type === "video" ? " (replay)" : "");
+  const img = $("modal-img"), vid = $("modal-video");
+  if (item.type === "mp4") {
+    img.classList.add("hidden");
+    vid.classList.remove("hidden");
+    vid.src = `/media/${encodeURIComponent(item.name)}`;
+    vid.play().catch(() => {});
+    $("modal-caption").textContent = item.name;
+  } else {
+    vid.classList.add("hidden"); vid.pause?.(); vid.removeAttribute("src");
+    img.classList.remove("hidden");
+    img.src = item.type === "mjpeg"
+      ? `/replay/${encodeURIComponent(item.name)}`
+      : `/media/${encodeURIComponent(item.name)}`;
+    $("modal-caption").textContent = item.name + (item.type === "mjpeg" ? " (replay)" : "");
+  }
   $("modal").classList.remove("hidden");
 }
 $("modal").onclick = () => {
   $("modal").classList.add("hidden");
-  $("modal-img").src = ""; // stop the replay stream
+  $("modal-img").src = "";          // stop the replay stream
+  const vid = $("modal-video");
+  vid.pause?.(); vid.removeAttribute("src"); vid.load?.();
 };
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") $("modal").onclick();
@@ -338,16 +420,19 @@ const settingsForm = $("settings-form");
 async function loadSettings() {
   try {
     const cfg = await api("/api/config");
-    for (const input of settingsForm.querySelectorAll("input"))
-      if (cfg[input.name] !== undefined) input.value = cfg[input.name];
+    for (const el of settingsForm.querySelectorAll("input, select")) {
+      if (cfg[el.name] === undefined) continue;
+      if (el.type === "checkbox") el.checked = !!cfg[el.name];
+      else el.value = cfg[el.name];
+    }
   } catch (e) {}
 }
 
 settingsForm.onsubmit = async (ev) => {
   ev.preventDefault();
   const body = {};
-  for (const input of settingsForm.querySelectorAll("input"))
-    body[input.name] = input.value;
+  for (const el of settingsForm.querySelectorAll("input, select"))
+    body[el.name] = el.type === "checkbox" ? (el.checked ? 1 : 0) : el.value;
   try {
     const r = await api("/api/config", "POST", body);
     $("settings-msg").textContent = "saved ✓";

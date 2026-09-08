@@ -8,6 +8,8 @@ LED loop and the camera pipeline run as background threads inside it.
 """
 import atexit
 import json
+import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -18,6 +20,7 @@ from camera import CameraManager
 from config import Config
 from hardware import create_hardware
 from ledcontrol import LedController
+from motion import MotionDetector
 import status as system_status
 
 app = Flask(__name__)
@@ -29,9 +32,11 @@ CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
 hardware = create_hardware()
 led = LedController(hardware, config)
 camera = CameraManager(config, CAPTURES_DIR)
+motion = MotionDetector(camera, config)
 
 
 def _shutdown():
+    motion.stop()
     camera.stop()
     led.stop()
     hardware.cleanup()
@@ -85,7 +90,6 @@ def record_stop():
 def led_get():
     return jsonify(led.get_state())
 
-
 @app.route("/api/led", methods=["POST"])
 def led_set():
     data = request.get_json(silent=True) or {}
@@ -107,9 +111,30 @@ def history():
                     for t, lv, b in pts])
 
 
+# ---------- motion detection ----------
+
+@app.route("/api/motion")
+def motion_get():
+    return jsonify(motion.state())
+
+
+@app.route("/api/motion", methods=["POST"])
+def motion_set():
+    data = request.get_json(silent=True) or {}
+    changes = {}
+    if "enabled" in data:
+        changes["motion_enabled"] = 1 if data["enabled"] else 0
+    if "sensitivity" in data:
+        changes["motion_sensitivity"] = data["sensitivity"]
+    _, errors = config.update(changes)
+    if errors:
+        return jsonify({"error": errors}), 400
+    return jsonify(motion.state())
+
+
 # ---------- gallery ----------
 
-MEDIA_EXTS = {".jpg", ".mjpeg"}
+MEDIA_EXTS = {".jpg", ".mjpeg", ".mp4"}
 
 
 def _safe_media_path(name):
@@ -124,23 +149,28 @@ def _safe_media_path(name):
 
 @app.route("/api/gallery")
 def gallery():
+    kinds = {".mp4": "mp4", ".mjpeg": "mjpeg"}
+    transcoding = camera.transcoding_names()
     items = []
     for path in CAPTURES_DIR.iterdir():
         if path.suffix not in MEDIA_EXTS or not path.is_file():
             continue
+        kind = kinds.get(path.suffix, "image")
         item = {
             "name": path.name,
-            "type": "video" if path.suffix == ".mjpeg" else "image",
+            "type": kind,
             "size": path.stat().st_size,
             "mtime": path.stat().st_mtime,
         }
-        if item["type"] == "video":
+        if kind != "image":
             sidecar = path.with_suffix(".json")
             if sidecar.exists():
                 try:
                     item.update(json.loads(sidecar.read_text()))
                 except (ValueError, OSError):
                     pass
+        if path.name in transcoding:
+            item["processing"] = True
         items.append(item)
     items.sort(key=lambda i: i["mtime"], reverse=True)
     return jsonify({"items": items,
@@ -160,7 +190,10 @@ def thumb(name):
     path = _safe_media_path(name)
     if path.suffix == ".jpg":
         return send_from_directory(CAPTURES_DIR, name)
-    frame = CameraManager.first_frame(path)
+    if path.suffix == ".mp4":
+        frame = camera.mp4_thumbnail(path)
+    else:
+        frame = CameraManager.first_frame(path)
     if frame is None:
         abort(404)
     return Response(frame, mimetype="image/jpeg")
@@ -190,7 +223,7 @@ def media_delete(name):
         return jsonify({"error": "recording in progress"}), 409
     path.unlink()
     sidecar = path.with_suffix(".json")
-    if path.suffix == ".mjpeg" and sidecar.exists():
+    if path.suffix in (".mjpeg", ".mp4") and sidecar.exists():
         sidecar.unlink()
     return jsonify({"deleted": name})
 
@@ -203,10 +236,43 @@ def api_status():
     s.update({
         "led": led.get_state(),
         "recording": camera.recording_state(),
+        "motion": motion.state(),
         "mock": {"gpio": hardware.mock, "camera": camera.mock},
         "server_time": time.time(),
     })
     return jsonify(s)
+
+
+# ---------- system power ----------
+
+def _deferred_system_cmd(cmd):
+    """Run a power command after a short delay so the HTTP response can flush
+    to the browser before the Pi goes down."""
+    def run():
+        time.sleep(1.0)
+        try:
+            subprocess.run(cmd, check=False)
+        except OSError as e:
+            print(f"[system] '{' '.join(cmd)}' failed: {e}")
+    threading.Thread(target=run, daemon=True).start()
+
+
+@app.route("/api/system/reboot", methods=["POST"])
+def system_reboot():
+    # Never reboot the dev laptop: in mock mode this is a no-op.
+    if hardware.mock:
+        return jsonify({"ok": True, "mock": True, "action": "reboot"})
+    _deferred_system_cmd(["sudo", "shutdown", "-r", "now"])
+    return jsonify({"ok": True, "action": "reboot"})
+
+
+@app.route("/api/system/shutdown", methods=["POST"])
+def system_shutdown():
+    # Never power off the dev laptop: in mock mode this is a no-op.
+    if hardware.mock:
+        return jsonify({"ok": True, "mock": True, "action": "shutdown"})
+    _deferred_system_cmd(["sudo", "shutdown", "-h", "now"])
+    return jsonify({"ok": True, "action": "shutdown"})
 
 
 @app.route("/api/config")
@@ -218,7 +284,8 @@ def config_get():
 def config_set():
     data = request.get_json(silent=True) or {}
     applied, errors = config.update(data)
-    if any(k.startswith("stream_") for k in applied):
+    camera_keys = {"flip_h", "flip_v", "af_mode", "af_range", "lens_position"}
+    if any(k.startswith("stream_") or k in camera_keys for k in applied):
         camera.restart_pipeline()
     status_code = 200 if not errors else 400
     return jsonify({"applied": applied, "errors": errors,
@@ -228,6 +295,7 @@ def config_set():
 if __name__ == "__main__":
     led.start()
     camera.start()
+    motion.start()
     atexit.register(_shutdown)
     mock_note = " (MOCK mode)" if hardware.mock or camera.mock else ""
     print(f"birdcam ui on http://0.0.0.0:{config['port']}{mock_note}")
