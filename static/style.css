@@ -124,13 +124,13 @@ button:disabled { opacity: 0.45; cursor: default; }
 /* gallery */
 .gallery-grid {
   display: grid; gap: 12px; margin-top: 8px;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
 }
 .gitem { background: var(--page); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .gitem img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; cursor: pointer; }
 .gmeta { padding: 8px 10px; font-size: 12.5px; color: var(--ink-2); }
 .gmeta .muted { display: block; }
-.gactions { display: flex; gap: 6px; padding: 0 10px 10px; }
+.gactions { display: flex; flex-wrap: wrap; gap: 6px; row-gap: 4px; padding: 0 10px 10px; }
 .gactions a, .gactions button {
   font-size: 12px; padding: 3px 8px; border-radius: 6px;
   color: var(--ink-2); text-decoration: none; border: 1px solid var(--border); background: transparent; cursor: pointer;

@@ -365,7 +365,7 @@ async function loadGallery() {
         : item.type === "mjpeg" ? '<span class="badge-video">▶ mjpeg</span>'
         : "";
       const convertBtn = item.type === "mjpeg" && !item.processing
-        ? '<button class="convert">convert to mp4</button>' : "";
+        ? '<button class="convert">to mp4</button>' : "";
       div.innerHTML =
         `<div class="gthumb"><img loading="lazy" src="/thumb/${encodeURIComponent(item.name)}" alt="${item.name}">` +
         badge + `</div>` +
