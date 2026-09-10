@@ -180,22 +180,36 @@ class CameraManager:
             name = rec_path.name
             self._rec_file = None
             self._rec_path = None
-        # Transcode to MP4 off the hot path (no-op if format is mjpeg / no ffmpeg).
-        self._maybe_transcode(rec_path, meta)
+        # Recordings are kept as raw .mjpeg; converting to mp4 is a separate,
+        # user-triggered action (see convert_to_mp4) since transcoding every
+        # clip is expensive on a Zero 2 W and most clips are never viewed.
         return name, meta
 
-    # --- mp4 transcode (background) ---
+    # --- mp4 transcode (background, user-triggered) ---
 
     def transcoding_names(self):
         with self._transcode_lock:
             return set(self._transcoding)
 
-    def _maybe_transcode(self, mjpeg_path, meta):
-        if self.config["recording_format"] != "mp4" or not has_ffmpeg():
-            return
+    def convert_to_mp4(self, name):
+        """Kick off a background mp4 transcode of an existing .mjpeg recording."""
+        path = self.captures_dir / name
+        if path.suffix != ".mjpeg" or not path.is_file():
+            raise FileNotFoundError(name)
+        if not has_ffmpeg():
+            raise RuntimeError("ffmpeg not installed")
         with self._transcode_lock:
-            self._transcoding.add(mjpeg_path.name)
-        threading.Thread(target=self._transcode_worker, args=(mjpeg_path, meta),
+            if path.name in self._transcoding:
+                raise RuntimeError("already converting")
+            self._transcoding.add(path.name)
+        sidecar = path.with_suffix(".json")
+        meta = {}
+        if sidecar.exists():
+            try:
+                meta = json.loads(sidecar.read_text())
+            except (ValueError, OSError):
+                pass
+        threading.Thread(target=self._transcode_worker, args=(path, meta),
                          name="transcode", daemon=True).start()
 
     def _transcode_worker(self, mjpeg_path, meta):

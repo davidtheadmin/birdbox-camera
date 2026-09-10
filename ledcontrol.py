@@ -24,6 +24,8 @@ class LedController:
         self._current = 0.0            # smoothed applied brightness
         self._level = None             # last sensor reading
         self._history = deque(maxlen=HISTORY_MAXLEN)  # (ts, level, brightness)
+        self._hyst_on = False          # hysteresis mode: current on/off state
+        self._last_switch = 0.0        # hysteresis mode: monotonic time of last switch
         self._thread = threading.Thread(target=self._run, name="led-loop", daemon=True)
 
     # --- lifecycle ---
@@ -77,7 +79,7 @@ class LedController:
 
     # --- the loop ---
 
-    def _level_to_brightness(self, level):
+    def _level_to_brightness_linear(self, level):
         lo = self.config["level_min"]
         hi = self.config["level_max"]
         cap = self.config["max_bright"]
@@ -89,14 +91,48 @@ class LedController:
             return cap
         return cap * (level - lo) / (hi - lo)
 
+    def _level_to_brightness_hysteresis(self, level):
+        """Two-threshold on/off with a minimum dwell between switches, to
+        break the LED->LDR feedback loop: level_min is the turn-OFF point,
+        level_max the turn-ON point, so small oscillations inside that band
+        don't flip the state, and auto_dwell rate-limits flips outside it."""
+        lo = self.config["level_min"]
+        hi = self.config["level_max"]
+        dwell = self.config["auto_dwell"]
+        if hi <= lo:  # degenerate config; treat as a plain threshold at lo
+            lo_ok, hi_ok = lo, lo
+        else:
+            lo_ok, hi_ok = lo, hi
+        now = time.monotonic()
+        if now - self._last_switch >= dwell:
+            if not self._hyst_on and level >= hi_ok:
+                self._hyst_on = True
+                self._last_switch = now
+            elif self._hyst_on and level <= lo_ok:
+                self._hyst_on = False
+                self._last_switch = now
+        return self.config["max_bright"] if self._hyst_on else 0
+
     def _run(self):
         while not self._stop.is_set():
-            level = self.hw.read_light_level()  # blocking, ~0.3s+
+            if self.config["sample_dark"]:
+                # Blank the LEDs for the read so the LDR sees ambient light
+                # only, not the LEDs' own IR feeding back into the sensor.
+                with self._lock:
+                    restore = self._current
+                self.hw.set_led_brightness(0)
+                level = self.hw.read_light_level()  # blocking, ~0.3s+
+                self.hw.set_led_brightness(restore)
+            else:
+                level = self.hw.read_light_level()  # blocking, ~0.3s+
             now = time.time()
             with self._lock:
                 self._level = level
                 if self._mode == "auto":
-                    target = self._level_to_brightness(level)
+                    if self.config["auto_mode"] == "hysteresis":
+                        target = self._level_to_brightness_hysteresis(level)
+                    else:
+                        target = self._level_to_brightness_linear(level)
                     self._current += (target - self._current) * self.config["smooth"]
                     self.hw.set_led_brightness(self._current)
                 self._history.append((now, level, round(self._current, 1)))

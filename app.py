@@ -215,6 +215,20 @@ def replay(name):
                     mimetype="multipart/x-mixed-replace; boundary=frame")
 
 
+@app.route("/api/media/<name>/convert", methods=["POST"])
+def media_convert(name):
+    path = _safe_media_path(name)
+    if path.suffix != ".mjpeg":
+        return jsonify({"error": "not an mjpeg recording"}), 400
+    try:
+        camera.convert_to_mp4(name)
+    except FileNotFoundError:
+        abort(404)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 409
+    return jsonify({"converting": name})
+
+
 @app.route("/api/media/<name>", methods=["DELETE"])
 def media_delete(name):
     path = _safe_media_path(name)

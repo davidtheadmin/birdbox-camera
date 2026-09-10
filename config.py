@@ -12,11 +12,14 @@ CONFIG_PATH = Path(__file__).parent / "config.json"
 
 DEFAULTS = {
     # --- LED / sensor loop (see birdcam-ui-briefing.md) ---
-    "level_min": 800,      # this bright or brighter -> LEDs off
-    "level_max": 4000,     # this dark or darker -> LEDs at max_bright
+    "level_min": 800,      # linear mode: bright->off point. hysteresis mode: turn-off threshold
+    "level_max": 4000,     # linear mode: dark->max point. hysteresis mode: turn-on threshold
     "max_bright": 80,      # duty-cycle cap, %
     "smooth": 0.3,         # exponential smoothing factor, 0-1
     "sensor_interval": 2.0,  # seconds between sensor reads (read itself takes ~0.3s+)
+    "auto_mode": "linear",   # linear (proportional ramp) | hysteresis (on/off + dwell)
+    "auto_dwell": 20.0,      # hysteresis mode: min seconds between on/off switches
+    "sample_dark": 0,        # blank the LEDs during each sensor read (ambient-only reading)
 
     # --- camera / stream ---
     "stream_width": 1280,
@@ -37,9 +40,6 @@ DEFAULTS = {
     "motion_interval": 1.0,   # seconds between motion samples
     "motion_cooldown": 6.0,   # keep recording this long after the last motion
 
-    # --- recording ---
-    "recording_format": "mp4",  # mp4 (transcoded via ffmpeg) | mjpeg (raw, no ffmpeg needed)
-
     # --- server ---
     "port": 8080,
     "captures_dir": "captures",
@@ -53,6 +53,9 @@ EDITABLE = {
     "max_bright": (int, 0, 100),
     "smooth": (float, 0.01, 1.0),
     "sensor_interval": (float, 0.5, 60.0),
+    "auto_mode": (str, ["linear", "hysteresis"]),
+    "auto_dwell": (float, 0.0, 300.0),
+    "sample_dark": (int, 0, 1),
     "stream_width": (int, 160, 4608),
     "stream_height": (int, 120, 2592),
     "stream_fps": (int, 1, 30),
@@ -66,7 +69,6 @@ EDITABLE = {
     "motion_sensitivity": (int, 1, 100),
     "motion_interval": (float, 0.2, 10.0),
     "motion_cooldown": (float, 1.0, 120.0),
-    "recording_format": (str, ["mp4", "mjpeg"]),
 }
 
 _lock = threading.Lock()

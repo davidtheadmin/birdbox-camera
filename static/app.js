@@ -364,15 +364,26 @@ async function loadGallery() {
         : item.type === "mp4" ? '<span class="badge-video">▶ mp4</span>'
         : item.type === "mjpeg" ? '<span class="badge-video">▶ mjpeg</span>'
         : "";
+      const convertBtn = item.type === "mjpeg" && !item.processing
+        ? '<button class="convert">convert to mp4</button>' : "";
       div.innerHTML =
         `<div class="gthumb"><img loading="lazy" src="/thumb/${encodeURIComponent(item.name)}" alt="${item.name}">` +
         badge + `</div>` +
         `<div class="gmeta">${fmtDate(item.mtime)}<span class="muted">${fmtBytes(item.size)}${dur}</span></div>` +
         `<div class="gactions">` +
         `<a href="/media/${encodeURIComponent(item.name)}?download=1">download</a>` +
+        convertBtn +
         `<button class="danger">delete</button></div>`;
       if (item.processing) div.classList.add("processing");
       else div.querySelector("img").onclick = () => openModal(item);
+      const cb = div.querySelector(".convert");
+      if (cb) cb.onclick = async () => {
+        try {
+          await api(`/api/media/${encodeURIComponent(item.name)}/convert`, "POST");
+          toast(`Converting ${item.name}…`);
+          loadGallery();
+        } catch (e) { toast("Error: " + e.message); }
+      };
       div.querySelector(".danger").onclick = async () => {
         if (!confirm(`Delete ${item.name}?`)) return;
         try { await api(`/api/media/${encodeURIComponent(item.name)}`, "DELETE"); loadGallery(); }
@@ -380,8 +391,20 @@ async function loadGallery() {
       };
       grid.appendChild(div);
     }
+    ensureGalleryPolling(g.items);
   } catch (e) {
     $("gallery").innerHTML = '<span class="muted">Failed to load gallery.</span>';
+  }
+}
+
+let galleryPollTimer = null;
+function ensureGalleryPolling(items) {
+  const anyProcessing = items.some(i => i.processing);
+  if (anyProcessing && !galleryPollTimer) {
+    galleryPollTimer = setInterval(loadGallery, 3000);
+  } else if (!anyProcessing && galleryPollTimer) {
+    clearInterval(galleryPollTimer);
+    galleryPollTimer = null;
   }
 }
 
