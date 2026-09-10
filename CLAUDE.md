@@ -264,7 +264,10 @@ Edit on the PC → commit → push → on the Pi:
 cd ~/birdbox-camera && git pull && sudo systemctl restart birdcam
 ```
 
-Current work is on branch `feature/add_flip_autofocus_onoff`.
+Current work is on branch `feature/recording-retention` (branched off
+`feature/add_flip_autofocus_onoff`); the Pi is deployed and running it as of
+this writing. `pc-archive/`'s systemd user timer is installed and enabled on
+the PC (`pebbles`), pulling hourly.
 `config.json` and `captures/` are git-ignored, so pulls won't clobber settings.
 
 The **power/restart buttons in the header need a sudoers entry** on the Pi or
