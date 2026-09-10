@@ -107,7 +107,10 @@
   <section class="card wide">
     <div class="graph-head">
       <h2>Gallery</h2>
-      <span class="muted" id="gallery-disk"></span>
+      <span>
+        <span class="muted" id="gallery-disk"></span>
+        <span class="muted" id="gallery-cleanup"></span>
+      </span>
     </div>
     <div id="gallery" class="gallery-grid"><span class="muted">loading…</span></div>
   </section>
@@ -167,6 +170,14 @@
         <legend>Motion</legend>
         <label>Motion sample interval (s) <input name="motion_interval" type="number" step="0.1" min="0.2" max="10"></label>
         <label>Motion cooldown (s) <input name="motion_cooldown" type="number" step="0.5" min="1" max="120"></label>
+      </fieldset>
+      <fieldset>
+        <legend>Cleanup <span class="muted">(deletes oldest recordings to keep the card from filling)</span></legend>
+        <label class="check"><input name="cleanup_enabled" type="checkbox"> Enabled</label>
+        <label>Target free space (GB) <input name="min_free_gb" type="number" step="0.5" min="0.5" max="500"></label>
+        <label>Emergency free space (GB) <span class="muted">(below this, unarchived recordings may be deleted too)</span>
+          <input name="emergency_free_gb" type="number" step="0.5" min="0.1" max="500"></label>
+        <label>Check interval (s) <input name="cleanup_interval" type="number" step="10" min="10" max="3600"></label>
       </fieldset>
       <div class="controls">
         <button type="submit">Save</button>

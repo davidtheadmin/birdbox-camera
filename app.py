@@ -17,6 +17,7 @@ from flask import (Flask, Response, jsonify, render_template, request,
                    send_from_directory, abort)
 
 from camera import CameraManager
+from cleanup import CleanupManager
 from config import Config
 from hardware import create_hardware
 from ledcontrol import LedController
@@ -33,9 +34,11 @@ hardware = create_hardware()
 led = LedController(hardware, config)
 camera = CameraManager(config, CAPTURES_DIR)
 motion = MotionDetector(camera, config)
+cleanup = CleanupManager(config, CAPTURES_DIR, camera)
 
 
 def _shutdown():
+    cleanup.stop()
     motion.stop()
     camera.stop()
     led.stop()
@@ -174,7 +177,8 @@ def gallery():
         items.append(item)
     items.sort(key=lambda i: i["mtime"], reverse=True)
     return jsonify({"items": items,
-                    "disk": system_status.disk_usage(CAPTURES_DIR)})
+                    "disk": system_status.disk_usage(CAPTURES_DIR),
+                    "cleanup": cleanup.state()})
 
 
 @app.route("/media/<name>")
@@ -251,6 +255,7 @@ def api_status():
         "led": led.get_state(),
         "recording": camera.recording_state(),
         "motion": motion.state(),
+        "cleanup": cleanup.state(),
         "mock": {"gpio": hardware.mock, "camera": camera.mock},
         "server_time": time.time(),
     })
@@ -310,6 +315,7 @@ if __name__ == "__main__":
     led.start()
     camera.start()
     motion.start()
+    cleanup.start()
     atexit.register(_shutdown)
     mock_note = " (MOCK mode)" if hardware.mock or camera.mock else ""
     print(f"birdcam ui on http://0.0.0.0:{config['port']}{mock_note}")

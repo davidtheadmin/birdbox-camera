@@ -350,6 +350,17 @@ async function loadGallery() {
     const g = await api("/api/gallery");
     $("gallery-disk").textContent =
       `${fmtBytes(g.disk.free)} free of ${fmtBytes(g.disk.total)} (${g.disk.used_percent}% used)`;
+    const cleanupEl = $("gallery-cleanup");
+    if (!g.cleanup.enabled) {
+      cleanupEl.textContent = "· auto-cleanup: off";
+      cleanupEl.classList.remove("warn");
+    } else if (g.cleanup.emergency) {
+      cleanupEl.textContent = "· ⚠ emergency cleanup active — archive PC is behind";
+      cleanupEl.classList.add("warn");
+    } else {
+      cleanupEl.textContent = `· auto-cleanup: ${g.cleanup.min_free_gb} GB target`;
+      cleanupEl.classList.remove("warn");
+    }
     const grid = $("gallery");
     grid.innerHTML = "";
     if (!g.items.length) {

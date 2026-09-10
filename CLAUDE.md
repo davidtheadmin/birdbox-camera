@@ -26,9 +26,13 @@ camera.py         CameraManager: rpicam-vid MJPEG pipeline, snapshots,
 ledcontrol.py     LED auto/manual control loop + sensor history ring buffer
 hardware.py       GPIO, PWM, LDR read, mock-mode fallback
 motion.py         Motion detection by frame differencing (needs Pillow)
+cleanup.py        Pi-side card-space cleanup loop; see "Recording retention"
 config.py         DEFAULTS + EDITABLE validation, persisted to config.json
 status.py         uptime / CPU temp / wifi / disk
 templates/index.html, static/app.js, static/style.css
+test_cleanup.py   Plain unittest for cleanup.py (no pytest dependency)
+pc-archive/       PC-side archive script + systemd user timer (runs on the
+                  PC, not the Pi — see "Recording retention" and its README)
 ```
 
 `config.json` (git-ignored) holds the live tuned values. `captures/` (also
@@ -99,6 +103,95 @@ PC 192.168.2.22 ──wifi──> 4B 192.168.2.11 ──USB──> Zero 192.168.
 | Zero | `/etc/NetworkManager/conf.d/10-usb0-managed.conf` | Otherwise NM leaves `usb0` `unmanaged` and it never comes up |
 | 4B | `usb0-up.path` + `usb0-up.service` | Reapplies `nmcli connection up usb-host` when `usb0` reappears. A udev `RUN+=` rule does **not** work (D-Bus isn't up yet) |
 | 4B | iptables + `iptables-persistent` | MASQUERADE on `wlan0` **and on `usb0`** — the second one is hairpin NAT, needed or SSH/HTTP replies never return |
+
+## Recording retention — Pi cleanup + PC archive
+
+The Pi's 58 GB SD card is the live view; the PC (`pebbles`) is the archive of
+record. Two independent jobs cooperate through an explicit handshake so the
+Pi never deletes a recording the PC hasn't archived yet:
+
+- **Pi side** (`cleanup.py`, a daemon thread started from `app.py` alongside
+  `led`/`camera`/`motion`): every `cleanup_interval` seconds, if free space on
+  the `captures/` filesystem drops below `min_free_gb`, deletes recordings
+  oldest-first (by capture time, sidecar `.json` included) until it's back
+  above target.
+- **PC side** (`pc-archive/birdcam-archive.sh`, hourly via a systemd user
+  timer — see `pc-archive/README.md` to install): `rsync`-pulls
+  `captures/` into `~/birdcam-archive` (**never `--delete`** — the Pi prunes
+  its own files; mirroring that into the archive would destroy the archive's
+  entire purpose), then prunes the local archive to a 100 GB cap, oldest
+  first, never touching the last 30 days or any `.jpg`.
+
+### The handshake
+
+After a successful pull, the PC works out the newest recording it has fully
+archived (ignoring anything touched in the last 5 minutes — it may still be
+mid-write or mid-transcode on the Pi) and writes that recording's **capture
+time** over SSH to `captures/.archived_through` on the Pi. `cleanup.py` will
+only delete recordings at or before that marker.
+
+**Ordering is by capture time, not mtime — this matters.** Both
+`cleanup.py` and `birdcam-archive.sh` parse the true recording start time
+out of the `rec_YYYYMMDD_HHMMSS` filename (as UTC, so the Pi and the PC
+agree regardless of either machine's local timezone) rather than trusting
+the filesystem mtime for retention *ordering* and the marker value. mtime
+is still used for exactly one thing: the PC script's "was this touched in
+the last 5 minutes" quiet-period check, where the actual mtime is the right
+signal. The reason: manually converting a `.mjpeg` to `.mp4` (see
+`camera.py`'s `convert_to_mp4`) rewrites the file's mtime to the conversion
+time. Since conversion is now a manual, on-demand action rather than
+immediate-after-recording, that drift can be large — an old, already-
+archived recording converted today would look newer than everything else
+by mtime, corrupting both the deletion order and the marker comparison.
+Confirmed live against real Pi data: a same-day recording converted earlier
+had a later mtime than one converted afterward despite happening first —
+capture-time parsing picked the correct "newest" recording where mtime did
+not.
+
+**If the marker file is missing** (first run ever, or the PC hasn't
+completed a pull yet), that's treated as "nothing archived" — normal
+cleanup deletes nothing, only the emergency path below can.
+
+**Emergency exception:** if free space falls below `emergency_free_gb`
+regardless of the marker (e.g. the PC has been off for weeks), `cleanup.py`
+deletes unarchived recordings too, oldest first, logging a clear `WARNING`
+each time. This state is also surfaced in the UI — the gallery header shows
+"⚠ emergency cleanup active" — not just in logs.
+
+### Never deleted, by either side
+
+- `.jpg` snapshots — never, regardless of space, age, or the emergency path.
+- The Pi: the recording currently being written (`camera.recording_state()`)
+  or mid-transcode (`camera.transcoding_names()`).
+- The PC: anything from the last 30 days, even if that leaves the archive
+  over its cap (logs a warning instead — a cap breach is recoverable,
+  deleting last week's nesting footage is not).
+
+### Config (Settings → Cleanup)
+
+| Key | Default | Meaning |
+|---|---|---|
+| `cleanup_enabled` | `1` | Master switch |
+| `min_free_gb` | `8.0` | Target free space |
+| `emergency_free_gb` | `2.0` | Below this, ignore the archive marker |
+| `cleanup_interval` | `300` | Seconds between checks |
+
+`emergency_free_gb` must be less than `min_free_gb`; `config.py` rejects a
+save that violates this.
+
+### Testing
+
+`test_cleanup.py` (plain `unittest`, no pytest dependency — run with
+`python3 -m unittest test_cleanup`) exercises `cleanup.py` against a scratch
+directory with staggered capture times/sizes: oldest-first, sidecars follow
+their recording, `.jpg` immune even when stuck in emergency, marker
+respected, emergency override, in-progress/transcoding files untouched, and
+a dedicated regression test for the capture-time-vs-mtime fix above (a file
+with an artificially recent mtime but an old, archived capture time must
+still be deleted; a newer, unarchived file with an older-looking mtime must
+still survive). Develop Pi-side changes with `BIRDCAM_MOCK=1` on the
+laptop. Test `birdcam-archive.sh` with `--dry-run` against a scratch
+`BIRDCAM_ARCHIVE_DIR` before ever pointing it at the real archive.
 
 ## Open issues
 

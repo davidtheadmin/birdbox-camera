@@ -1,0 +1,8 @@
+[Unit]
+Description=Pull birdcam recordings into the local archive
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/bin/birdcam-archive.sh

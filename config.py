@@ -40,6 +40,12 @@ DEFAULTS = {
     "motion_interval": 1.0,   # seconds between motion samples
     "motion_cooldown": 6.0,   # keep recording this long after the last motion
 
+    # --- cleanup (Pi-side card space management; see cleanup.py) ---
+    "cleanup_enabled": 1,        # master switch
+    "min_free_gb": 8.0,          # target free space on the captures filesystem
+    "emergency_free_gb": 2.0,    # below this, delete unarchived recordings too
+    "cleanup_interval": 300,     # seconds between checks
+
     # --- server ---
     "port": 8080,
     "captures_dir": "captures",
@@ -69,6 +75,10 @@ EDITABLE = {
     "motion_sensitivity": (int, 1, 100),
     "motion_interval": (float, 0.2, 10.0),
     "motion_cooldown": (float, 1.0, 120.0),
+    "cleanup_enabled": (int, 0, 1),
+    "min_free_gb": (float, 0.5, 500.0),
+    "emergency_free_gb": (float, 0.1, 500.0),
+    "cleanup_interval": (int, 10, 3600),
 }
 
 _lock = threading.Lock()
@@ -121,6 +131,16 @@ class Config:
                     errors[key] = f"must be between {lo} and {hi}"
                     continue
             applied[key] = val
+        if "min_free_gb" in applied or "emergency_free_gb" in applied:
+            with _lock:
+                trial_min = applied.get("min_free_gb", self._values["min_free_gb"])
+                trial_emergency = applied.get("emergency_free_gb", self._values["emergency_free_gb"])
+            if trial_emergency >= trial_min:
+                msg = "emergency_free_gb must be less than min_free_gb"
+                for key in ("min_free_gb", "emergency_free_gb"):
+                    if key in applied:
+                        errors[key] = msg
+                        del applied[key]
         if applied:
             with _lock:
                 self._values.update(applied)

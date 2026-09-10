@@ -193,4 +193,5 @@ label.check input { width: auto; accent-color: var(--series-1); }
 }
 
 .muted { color: var(--muted); }
+.warn { color: var(--rec); font-weight: 600; }
 .hidden { display: none !important; }
