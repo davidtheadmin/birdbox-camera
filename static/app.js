@@ -160,7 +160,8 @@ async function loadHistory() {
 }
 
 const PANELS = [
-  { svg: "graph-level", key: "level", color: "var(--series-1)", ymax: pts => Math.max(1000, ...pts.map(p => p.level ?? 0)) * 1.08 },
+  { svg: "graph-level", key: "level", color: "var(--series-1)", log: true,
+    ymax: pts => 10 ** Math.max(2, Math.ceil(Math.log10(Math.max(1, ...pts.map(p => p.level ?? 0))))) },
   { svg: "graph-bright", key: "brightness", color: "var(--series-2)", ymax: () => 100 },
 ];
 const PAD = { l: 6, r: 44, t: 6, b: 16 };
@@ -189,7 +190,15 @@ function drawPanel(p) {
   const t0 = now - historySeconds;
   const ymax = p.ymax(pts.length ? pts : [{ [p.key]: 0 }]);
   const X = t => PAD.l + (t - t0) / historySeconds * plotW;
-  const Y = v => PAD.t + plotH - (v / ymax) * plotH;
+  // log panels run from 0.01 lux to ymax; linear panels from 0 to ymax
+  const LOG_MIN = -2;
+  const yfrac = v => p.log
+    ? (Math.log10(Math.max(v, 0.01)) - LOG_MIN) / (Math.log10(ymax) - LOG_MIN)
+    : v / ymax;
+  const Y = v => PAD.t + plotH - yfrac(v) * plotH;
+  const tick = f => p.log
+    ? String(+(10 ** (LOG_MIN + f * (Math.log10(ymax) - LOG_MIN))).toPrecision(1))
+    : String(Math.round(ymax * f));
 
   // recessive grid: baseline + two hairlines with muted tick labels
   for (const frac of [0, 0.5, 1]) {
@@ -198,7 +207,7 @@ function drawPanel(p) {
       stroke: frac === 0 ? "#383835" : "#2c2c2a", "stroke-width": 1 });
     if (frac > 0) add("text", { x: W - PAD.r + 6, y: y + 4, fill: "#898781",
       "font-size": 10.5, "font-family": "system-ui, sans-serif" },
-      String(Math.round(ymax * frac)));
+      tick(frac));
   }
   // time ticks
   for (const frac of [0.02, 0.5, 0.98]) {

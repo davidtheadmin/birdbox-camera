@@ -1,0 +1,14 @@
+[Unit]
+Description=Birdbox camera web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=birdcam
+WorkingDirectory=/home/birdcam/birdbox-camera
+ExecStart=/usr/bin/python3 /home/birdcam/birdbox-camera/app.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

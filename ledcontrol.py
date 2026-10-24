@@ -1,10 +1,12 @@
 """Background sensor/LED loop, absorbed from birdcam_lights.py.
 
-Runs as a single daemon thread owned by the web app. In auto mode the LDR
-reading is mapped linearly to PWM brightness with exponential smoothing;
+Runs as a single daemon thread owned by the web app. In auto mode the
+VEML7700 reading (lux) is mapped to LED brightness on a log scale, with
+exponential smoothing;
 in manual mode a user-set brightness is applied and the sensor is still
 read so the UI keeps showing live light levels.
 """
+import math
 import threading
 import time
 from collections import deque
@@ -77,21 +79,23 @@ class LedController:
 
     # --- the loop ---
 
-    def _level_to_brightness(self, level):
-        lo = self.config["level_min"]
-        hi = self.config["level_max"]
+    def _level_to_brightness(self, lux):
+        """Brighter than lux_off -> LEDs off; darker than lux_full -> max_bright.
+        In between, interpolate on log10(lux), which matches how dusk falls."""
+        off = max(self.config["lux_off"], 0.01)
+        full = max(self.config["lux_full"], 0.001)
         cap = self.config["max_bright"]
-        if hi <= lo:  # degenerate config; treat as a threshold at lo
-            return cap if level >= lo else 0
-        if level <= lo:
+        if off <= full:  # degenerate config; treat as a threshold at lux_off
+            return cap if lux < off else 0
+        if lux >= off:
             return 0
-        if level >= hi:
+        if lux <= full:
             return cap
-        return cap * (level - lo) / (hi - lo)
+        return cap * (math.log10(off) - math.log10(lux)) / (math.log10(off) - math.log10(full))
 
     def _run(self):
         while not self._stop.is_set():
-            level = self.hw.read_light_level()  # blocking, ~0.3s+
+            level = self.hw.read_light_level()  # blocking, ~0.1-0.4 s
             now = time.time()
             with self._lock:
                 self._level = level

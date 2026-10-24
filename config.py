@@ -12,11 +12,11 @@ CONFIG_PATH = Path(__file__).parent / "config.json"
 
 DEFAULTS = {
     # --- LED / sensor loop (see birdcam-ui-briefing.md) ---
-    "level_min": 800,      # this bright or brighter -> LEDs off
-    "level_max": 4000,     # this dark or darker -> LEDs at max_bright
-    "max_bright": 80,      # duty-cycle cap, %
+    "lux_off": 20.0,       # this bright or brighter (lux) -> LEDs off
+    "lux_full": 1.0,       # this dark or darker (lux) -> LEDs at max_bright
+    "max_bright": 50,      # LED current cap, % of 94 mA (50 % = ~47 mA)
     "smooth": 0.3,         # exponential smoothing factor, 0-1
-    "sensor_interval": 2.0,  # seconds between sensor reads (read itself takes ~0.3s+)
+    "sensor_interval": 2.0,  # seconds between sensor reads
 
     # --- camera / stream ---
     "stream_width": 1280,
@@ -31,8 +31,8 @@ DEFAULTS = {
 
 # Keys the settings API may change, with (type, min, max) validation.
 EDITABLE = {
-    "level_min": (int, 0, 100000),
-    "level_max": (int, 0, 100000),
+    "lux_off": (float, 0.01, 100000),
+    "lux_full": (float, 0.001, 100000),
     "max_bright": (int, 0, 100),
     "smooth": (float, 0.01, 1.0),
     "sensor_interval": (float, 0.5, 60.0),

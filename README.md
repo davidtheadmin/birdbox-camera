@@ -5,6 +5,18 @@ brief). One Flask process owns everything: the sensor/LED loop, the camera
 pipeline, and the web server — required because lgpio locks GPIO pins
 per-process.
 
+## Pi setup (Raspberry Pi OS Lite, Pi 3A+ with Birdbox pHAT)
+
+```sh
+sudo apt install -y git python3-flask python3-smbus2 i2c-tools
+sudo raspi-config nonint do_i2c 0
+echo 'dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4' | sudo tee -a /boot/firmware/config.txt
+sudo reboot
+```
+
+Checks: `rpicam-hello --list-cameras` lists `imx708_wide_noir`,
+`i2cdetect -y 1` shows `10`, `ls /sys/class/pwm` shows `pwmchip0`.
+
 ## Run
 
 On the Pi:
@@ -22,15 +34,15 @@ BIRDCAM_MOCK=1 python app.py        # bash
 $env:BIRDCAM_MOCK=1; python app.py  # powershell
 ```
 
-Mock mode also kicks in automatically when `RPi.GPIO` / `rpicam-vid`
-aren't present.
+Mock mode also kicks in automatically when the PWM chip, `smbus2` or
+`rpicam-vid` aren't present.
 
 ## Layout
 
 | File | Role |
 |---|---|
 | `app.py` | Flask app + API routes, the single entrypoint |
-| `hardware.py` | GPIO layer (LED PWM on 17, LDR on 18) + mock |
+| `hardware.py` | Birdbox pHAT: IR LED current via hardware PWM0 (GPIO12), VEML7700 light sensor in lux (I2C 0x10) + mock |
 | `ledcontrol.py` | background sensor→LED loop (absorbed from `birdcam_lights.py`), auto/manual, history |
 | `camera.py` | single rpicam-vid MJPEG pipeline: live stream, snapshots, recordings + mock camera |
 | `status.py` | uptime / CPU temp / wifi / disk from /proc and /sys |
@@ -45,7 +57,5 @@ back by re-streaming, VLC plays the files directly, and
 
 - Tuning constants (LED thresholds, stream size/fps/quality) live in the
   Settings panel and persist to `config.json`.
-- `birdcam_lights.py` is superseded by the app and must NOT be run while
-  the app is running (GPIO single-owner). Delete it once the app is
-  verified on the Pi.
-- Wrap in systemd later: `ExecStart=/usr/bin/python3 /home/birdcam/birdcam/app.py`.
+- Run at boot with systemd:
+  `sudo cp birdcam.service /etc/systemd/system/ && sudo systemctl enable --now birdcam`.

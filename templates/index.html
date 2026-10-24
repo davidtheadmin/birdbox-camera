@@ -45,7 +45,7 @@
         </div>
         <div class="led-stats">
           <div class="stat"><span class="stat-value" id="led-brightness">–</span><span class="stat-label">LED brightness</span></div>
-          <div class="stat"><span class="stat-value" id="light-level">–</span><span class="stat-label">light level</span></div>
+          <div class="stat"><span class="stat-value" id="light-level">–</span><span class="stat-label">light (lux)</span></div>
         </div>
       </div>
       <div class="slider-row">
@@ -66,7 +66,7 @@
       </div>
       <div id="graphs">
         <div class="panel">
-          <div class="panel-title"><span class="chipdot" style="background:var(--series-1)"></span>Light level <span class="muted">(higher = darker)</span></div>
+          <div class="panel-title"><span class="chipdot" style="background:var(--series-1)"></span>Light <span class="muted">(lux)</span></div>
           <svg id="graph-level" preserveAspectRatio="none"></svg>
         </div>
         <div class="panel">
@@ -93,8 +93,8 @@
     <form id="settings-form">
       <fieldset>
         <legend>LED / sensor</legend>
-        <label>Level min (bright &rarr; LEDs off) <input name="level_min" type="number" min="0" max="100000"></label>
-        <label>Level max (dark &rarr; max bright) <input name="level_max" type="number" min="0" max="100000"></label>
+        <label>LEDs off above (lux) <input name="lux_off" type="number" step="any" min="0.01" max="100000"></label>
+        <label>LEDs at max below (lux) <input name="lux_full" type="number" step="any" min="0.001" max="100000"></label>
         <label>Max brightness % <input name="max_bright" type="number" min="0" max="100"></label>
         <label>Smoothing (0&ndash;1) <input name="smooth" type="number" step="0.05" min="0.01" max="1"></label>
         <label>Sensor interval (s) <input name="sensor_interval" type="number" step="0.5" min="0.5" max="60"></label>
