@@ -3,12 +3,11 @@
     python3 app.py            # on the Pi: real GPIO + rpicam-vid
     BIRDCAM_MOCK=1 python3 app.py   # dev laptop: simulated sensor + camera
 
-This process is the single owner of the LED PWM, light sensor and camera; the sensor/
+This process is the single owner of GPIO 17/18 and the camera; the sensor/
 LED loop and the camera pipeline run as background threads inside it.
 """
 import atexit
 import json
-import socket
 import time
 from pathlib import Path
 
@@ -42,7 +41,7 @@ def _shutdown():
 
 @app.route("/")
 def index():
-    return render_template("index.html", hostname=socket.gethostname())
+    return render_template("index.html")
 
 
 # ---------- live video ----------
