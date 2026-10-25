@@ -8,9 +8,11 @@ per-process.
 ## Pi setup (Raspberry Pi OS Lite, Pi 3A+ with Birdbox pHAT)
 
 ```sh
-sudo apt install -y git python3-flask python3-smbus2 i2c-tools
+sudo apt install -y git python3-flask python3-smbus2 python3-pil ffmpeg i2c-tools
 sudo raspi-config nonint do_i2c 0
 echo 'dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4' | sudo tee -a /boot/firmware/config.txt
+echo 'birdcam ALL=(root) NOPASSWD: /usr/sbin/shutdown' | sudo tee /etc/sudoers.d/birdcam-power
+sudo chmod 440 /etc/sudoers.d/birdcam-power   # for the restart/power buttons
 sudo reboot
 ```
 
