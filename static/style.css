@@ -167,18 +167,42 @@ input[type=number] {
 .muted { color: var(--muted); }
 .hidden { display: none !important; }
 
-/* ---------- fit the first screen (video + side panels) to the window ---------- */
-:root { --top-h: calc(100dvh - 76px); }   /* window height minus header and gaps */
-header { min-height: 56px; }
+/* ---------- graph navigation ---------- */
+#graphs { cursor: grab; touch-action: pan-y; user-select: none; }
+#graphs.dragging { cursor: grabbing; }
+.graph-foot { display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-top: 6px; min-height: 24px; }
+#btn-live { font-size: 12px; padding: 2px 10px; }
+
+/* ---------- whole page fits the window (desktop) ---------- */
 @media (min-width: 901px) {
-  main { grid-template-rows: var(--top-h); align-items: stretch; max-width: none; }
-  .video-card { display: flex; flex-direction: column; height: var(--top-h); }
+  body { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; padding-bottom: 16px; }
+  main {
+    flex: 1; min-height: 0; width: 100%; max-width: none;
+    grid-template-rows: minmax(0, 1fr) 236px;
+    align-items: stretch;
+  }
+  .video-card { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; min-height: 0; }
   .video-wrap { flex: 1; min-height: 0; }
   #stream { height: 100%; aspect-ratio: auto; }
-  .side { height: var(--top-h); grid-template-rows: auto minmax(0, 1fr); }
+  .video-card .controls { padding: 8px 14px; }
+
+  .side { grid-column: 2; grid-row: 1; min-height: 0; grid-template-rows: auto minmax(0, 1fr); }
   .side > .card:last-child { display: flex; flex-direction: column; min-height: 0; }
   #graphs { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  .panel svg { flex: 1; min-height: 60px; height: auto; }
-  .wide { grid-row: auto; }
+  .panel svg { flex: 1; min-height: 50px; height: auto; }
+
+  /* gallery: one horizontally scrolling row under the video */
+  .gallery-card { grid-column: 1; grid-row: 2; display: flex; flex-direction: column; min-height: 0; }
+  .gallery-card .gallery-grid {
+    flex: 1; min-height: 0; margin-top: 6px;
+    grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 170px;
+    overflow-x: auto; overflow-y: hidden; align-items: start;
+  }
+  .gallery-card .gmeta { padding: 6px 10px 4px; }
+  .gallery-card .gactions { padding: 0 10px 8px; }
+
+  /* settings: bottom right, scrolls inside its own panel */
+  .settings-card { grid-column: 2; grid-row: 2; overflow-y: auto; min-height: 0; }
+  .settings-card fieldset { grid-template-columns: 1fr 1fr; }
 }

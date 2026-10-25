@@ -59,9 +59,11 @@
       <div class="graph-head">
         <h2>Sensor history</h2>
         <div class="segmented small" id="range-toggle">
+          <button data-seconds="1800">30m</button>
           <button data-seconds="3600" class="active">1h</button>
-          <button data-seconds="10800">3h</button>
           <button data-seconds="21600">6h</button>
+          <button data-seconds="86400">1d</button>
+          <button data-seconds="604800">7d</button>
         </div>
       </div>
       <div id="graphs">
@@ -75,11 +77,15 @@
         </div>
         <div id="graph-tooltip" class="hidden"></div>
       </div>
+      <div class="graph-foot muted">
+        <span id="graph-range">–</span>
+        <button id="btn-live" class="hidden">&#9654; back to now</button>
+      </div>
     </section>
   </div>
 
   <!-- gallery -->
-  <section class="card wide">
+  <section class="card wide gallery-card">
     <div class="graph-head">
       <h2>Gallery</h2>
       <span class="muted" id="gallery-disk"></span>
@@ -88,7 +94,7 @@
   </section>
 
   <!-- settings -->
-  <details class="card wide" id="settings">
+  <details class="card wide settings-card" id="settings" open>
     <summary><h2>Settings</h2></summary>
     <form id="settings-form">
       <fieldset>

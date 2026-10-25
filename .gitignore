@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 config.json
 captures/
+history.csv
+history.tmp

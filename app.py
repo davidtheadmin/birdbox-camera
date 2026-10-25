@@ -101,10 +101,18 @@ def led_set():
 
 @app.route("/api/history")
 def history():
-    seconds = min(int(request.args.get("seconds", 3600)), 24 * 3600)
-    pts = led.get_history(seconds=seconds)
-    return jsonify([{"t": round(t, 1), "level": lv, "brightness": b}
-                    for t, lv, b in pts])
+    now = time.time()
+    try:
+        end = float(request.args.get("end", now))
+        if "start" in request.args:
+            start = float(request.args["start"])
+        else:
+            start = end - min(float(request.args.get("seconds", 3600)), 14 * 86400)
+        points = max(10, min(int(request.args.get("points", 400)), 2000))
+    except ValueError:
+        return jsonify({"error": "bad start/end/points"}), 400
+    pts = led.get_history(start=start, end=end, max_points=points)
+    return jsonify([{"t": t, "level": lv, "brightness": b} for t, lv, b in pts])
 
 
 # ---------- gallery ----------

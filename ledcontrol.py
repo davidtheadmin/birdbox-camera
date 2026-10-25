@@ -10,9 +10,13 @@ import math
 import threading
 import time
 from collections import deque
+from pathlib import Path
 
-# ~6h of history at a 2s interval; the API downsamples for the graph.
+# Raw readings: ~6 h at a 2 s interval.
 HISTORY_MAXLEN = 10800
+# Per-minute averages: 14 days, also appended to a CSV so they survive reboots.
+MINUTES_MAXLEN = 14 * 24 * 60
+HISTORY_FILE = Path(__file__).parent / "history.csv"
 
 
 class LedController:
@@ -26,6 +30,9 @@ class LedController:
         self._current = 0.0            # smoothed applied brightness
         self._level = None             # last sensor reading
         self._history = deque(maxlen=HISTORY_MAXLEN)  # (ts, level, brightness)
+        self._minutes = deque(maxlen=MINUTES_MAXLEN)  # per-minute averages, same shape
+        self._bucket = None                           # (minute_start, [levels], [brightness])
+        self._load_minutes()
         self._thread = threading.Thread(target=self._run, name="led-loop", daemon=True)
 
     # --- lifecycle ---
@@ -66,16 +73,82 @@ class LedController:
                 self._current = percent
                 self.hw.set_led_brightness(percent)
 
-    def get_history(self, seconds=3600, max_points=360):
-        """Return [(ts, level, brightness)] covering the last `seconds`,
-        downsampled to at most `max_points` entries."""
-        cutoff = time.time() - seconds
+    def get_history(self, start=None, end=None, max_points=400):
+        """Return [(ts, level, brightness)] between start and end (unix time).
+
+        Uses raw readings where they exist and per-minute averages for older
+        times, then averages into at most `max_points` evenly spaced buckets.
+        """
+        end = end if end is not None else time.time()
+        start = start if start is not None else end - 3600
         with self._lock:
-            pts = [p for p in self._history if p[0] >= cutoff]
-        if len(pts) > max_points:
-            step = len(pts) / max_points
-            pts = [pts[int(i * step)] for i in range(max_points)]
-        return pts
+            raw = list(self._history)
+            minutes = list(self._minutes)
+        raw_from = raw[0][0] if raw else float("inf")
+        pts = [p for p in minutes if start <= p[0] < min(end, raw_from)]
+        pts += [p for p in raw if start <= p[0] <= end]
+        if len(pts) <= max_points:
+            return pts
+        width = (end - start) / max_points
+        buckets = {}
+        for t, lv, b in pts:
+            buckets.setdefault(int((t - start) // width), []).append((t, lv, b))
+        out = []
+        for _, group in sorted(buckets.items()):
+            levels = [g[1] for g in group if g[1] is not None]
+            out.append((
+                round(sum(g[0] for g in group) / len(group), 1),
+                round(sum(levels) / len(levels), 2) if levels else None,
+                round(sum(g[2] for g in group) / len(group), 1),
+            ))
+        return out
+
+    # --- per-minute history, persisted ---
+
+    def _load_minutes(self):
+        cutoff = time.time() - MINUTES_MAXLEN * 60
+        rows = []
+        try:
+            with open(HISTORY_FILE) as f:
+                for line in f:
+                    try:
+                        t, lv, b = line.strip().split(",")
+                        t = float(t)
+                        if t >= cutoff:
+                            rows.append((t, float(lv) if lv else None, float(b)))
+                    except ValueError:
+                        continue
+        except OSError:
+            return
+        self._minutes.extend(rows[-MINUTES_MAXLEN:])
+        # rewrite the file so it never grows past 14 days
+        try:
+            tmp = HISTORY_FILE.with_suffix(".tmp")
+            with open(tmp, "w") as f:
+                for t, lv, b in self._minutes:
+                    f.write(f"{t:.0f},{'' if lv is None else lv},{b}\n")
+            tmp.replace(HISTORY_FILE)
+        except OSError as e:
+            print(f"[history] could not rewrite {HISTORY_FILE}: {e}")
+
+    def _add_to_minute(self, now, level, brightness):
+        minute = int(now // 60) * 60
+        if self._bucket and self._bucket[0] != minute:
+            m, levels, brights = self._bucket
+            lv = round(sum(levels) / len(levels), 2) if levels else None
+            b = round(sum(brights) / len(brights), 1)
+            self._minutes.append((m + 30, lv, b))
+            try:
+                with open(HISTORY_FILE, "a") as f:
+                    f.write(f"{m + 30},{'' if lv is None else lv},{b}\n")
+            except OSError:
+                pass
+            self._bucket = None
+        if self._bucket is None:
+            self._bucket = (minute, [], [])
+        if level is not None:
+            self._bucket[1].append(level)
+        self._bucket[2].append(brightness)
 
     # --- the loop ---
 
@@ -104,4 +177,5 @@ class LedController:
                     self._current += (target - self._current) * self.config["smooth"]
                     self.hw.set_led_brightness(self._current)
                 self._history.append((now, level, round(self._current, 1)))
+                self._add_to_minute(now, level, round(self._current, 1))
             self._stop.wait(self.config["sensor_interval"])

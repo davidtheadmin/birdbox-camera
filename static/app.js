@@ -139,22 +139,59 @@ slider.addEventListener("change", async () => {
 });
 
 // ---------- sensor history graphs ----------
+// View window [viewEnd - viewSpan, viewEnd]. Mouse wheel zooms around the
+// cursor, dragging pans; "following" keeps the right edge at now.
 
-let historySeconds = 3600;
+const MIN_SPAN = 5 * 60;          // 5 min
+const MAX_SPAN = 14 * 86400;      // 14 days (what the Pi keeps)
+let viewSpan = 3600;
+let viewEnd = Date.now() / 1000;
+let following = true;
 let historyPoints = [];
+let loadTimer = null;
+let loadSeq = 0;
+
+function viewStart() { return viewEnd - viewSpan; }
+
+function setRangeButtons() {
+  document.querySelectorAll("#range-toggle button").forEach(b =>
+    b.classList.toggle("active", following && +b.dataset.seconds === Math.round(viewSpan)));
+  $("btn-live").classList.toggle("hidden", following);
+  const fmt = t => {
+    const d = new Date(t * 1000);
+    const sameDay = d.toDateString() === new Date().toDateString();
+    return (sameDay ? "" : d.toLocaleDateString([], { day: "numeric", month: "short" }) + " ") +
+      d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  };
+  $("graph-range").textContent = `${fmt(viewStart())} – ${following ? "now" : fmt(viewEnd)}`;
+}
+
+function changeView(span, end, follow) {
+  const now = Date.now() / 1000;
+  viewSpan = Math.min(MAX_SPAN, Math.max(MIN_SPAN, span));
+  viewEnd = Math.min(now, Math.max(now - MAX_SPAN + viewSpan, end));
+  following = follow || viewEnd >= now - viewSpan * 0.01;
+  if (following) viewEnd = now;
+  setRangeButtons();
+  drawGraphs();
+  clearTimeout(loadTimer);
+  loadTimer = setTimeout(loadHistory, 120);
+}
 
 document.querySelectorAll("#range-toggle button").forEach(btn => {
-  btn.onclick = () => {
-    document.querySelectorAll("#range-toggle button").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-    historySeconds = +btn.dataset.seconds;
-    loadHistory();
-  };
+  btn.onclick = () => changeView(+btn.dataset.seconds, Date.now() / 1000, true);
 });
+$("btn-live").onclick = () => changeView(viewSpan, Date.now() / 1000, true);
 
 async function loadHistory() {
+  const seq = ++loadSeq;
+  if (following) viewEnd = Date.now() / 1000;
+  const w = $("graph-level").clientWidth || 600;
   try {
-    historyPoints = await api(`/api/history?seconds=${historySeconds}`);
+    const pts = await api(`/api/history?start=${viewStart().toFixed(0)}&end=${viewEnd.toFixed(0)}&points=${Math.round(w / 2)}`);
+    if (seq !== loadSeq) return; // a newer request is on its way
+    historyPoints = pts;
+    setRangeButtons();
     drawGraphs();
   } catch (e) {}
 }
@@ -170,12 +207,20 @@ function drawGraphs() {
   for (const p of PANELS) drawPanel(p);
 }
 
+function timeLabel(t) {
+  const d = new Date(t * 1000);
+  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (viewSpan > 86400 * 1.5) return d.toLocaleDateString([], { day: "numeric", month: "short" }) + " " + hm;
+  return hm;
+}
+
 function drawPanel(p) {
   const svg = $(p.svg);
   const W = svg.clientWidth || 600, H = svg.clientHeight || 92;
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   svg.innerHTML = "";
-  const pts = historyPoints.filter(q => q[p.key] != null);
+  const t0 = viewStart();
+  const pts = historyPoints.filter(q => q[p.key] != null && q.t >= t0 - viewSpan * 0.02 && q.t <= viewEnd + viewSpan * 0.02);
   const plotW = W - PAD.l - PAD.r, plotH = H - PAD.t - PAD.b;
   const ns = "http://www.w3.org/2000/svg";
   const add = (tag, attrs, text) => {
@@ -186,10 +231,8 @@ function drawPanel(p) {
     return el;
   };
 
-  const now = Date.now() / 1000;
-  const t0 = now - historySeconds;
   const ymax = p.ymax(pts.length ? pts : [{ [p.key]: 0 }]);
-  const X = t => PAD.l + (t - t0) / historySeconds * plotW;
+  const X = t => PAD.l + (t - t0) / viewSpan * plotW;
   // log panels run from 0.01 lux to ymax; linear panels from 0 to ymax
   const LOG_MIN = -2;
   const yfrac = v => p.log
@@ -206,80 +249,129 @@ function drawPanel(p) {
     add("line", { x1: PAD.l, x2: PAD.l + plotW, y1: y, y2: y,
       stroke: frac === 0 ? "#383835" : "#2c2c2a", "stroke-width": 1 });
     if (frac > 0) add("text", { x: W - PAD.r + 6, y: y + 4, fill: "#898781",
-      "font-size": 10.5, "font-family": "system-ui, sans-serif" },
-      tick(frac));
+      "font-size": 10.5, "font-family": "system-ui, sans-serif" }, tick(frac));
   }
   // time ticks
   for (const frac of [0.02, 0.5, 0.98]) {
-    const t = t0 + historySeconds * frac;
-    const d = new Date(t * 1000);
-    const label = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    const t = t0 + viewSpan * frac;
     add("text", { x: X(t), y: H - 3, fill: "#898781", "font-size": 10.5,
       "text-anchor": frac > 0.6 ? "end" : frac < 0.4 ? "start" : "middle",
-      "font-family": "system-ui, sans-serif" }, label);
+      "font-family": "system-ui, sans-serif" }, timeLabel(t));
   }
 
+  const clip = add("clipPath", { id: "clip-" + p.svg });
+  clip.appendChild(svg.lastChild.ownerDocument.createElementNS(ns, "rect"));
+  for (const [k, v] of Object.entries({ x: PAD.l, y: 0, width: plotW, height: H }))
+    clip.firstChild.setAttribute(k, v);
+
   if (pts.length > 1) {
+    // break the line where there is a gap (Pi was off)
+    const gap = Math.max(180, viewSpan / 100);
     const path = pts.map((q, i) =>
-      `${i ? "L" : "M"}${X(q.t).toFixed(1)},${Y(q[p.key]).toFixed(1)}`).join("");
+      `${i && q.t - pts[i - 1].t <= gap ? "L" : "M"}${X(q.t).toFixed(1)},${Y(q[p.key]).toFixed(1)}`).join("");
     add("path", { d: path, fill: "none", stroke: p.color, "stroke-width": 2,
-      "stroke-linejoin": "round", "stroke-linecap": "round" });
-    // direct label: latest value at the line's end
-    const last = pts[pts.length - 1];
-    add("text", { x: Math.min(X(last.t) + 5, W - 2), y: Y(last[p.key]) + 4,
-      fill: "#c3c2b7", "font-size": 11, "font-family": "system-ui, sans-serif" },
-      p.key === "brightness" ? Math.round(last[p.key]) + "%" : String(last[p.key]));
+      "stroke-linejoin": "round", "stroke-linecap": "round", "clip-path": `url(#clip-${p.svg})` });
+    if (following) {
+      const last = pts[pts.length - 1];
+      add("text", { x: Math.min(X(last.t) + 5, W - 2), y: Math.max(PAD.t + 22, Y(last[p.key]) + 4),
+        fill: "#c3c2b7", "font-size": 11, "font-family": "system-ui, sans-serif" },
+        p.key === "brightness" ? Math.round(last[p.key]) + "%"
+          : last[p.key] >= 1000 ? (last[p.key] / 1000).toFixed(1) + "k"
+          : last[p.key] >= 10 ? String(Math.round(last[p.key])) : last[p.key].toFixed(1));
+    }
   } else {
     add("text", { x: W / 2, y: H / 2, fill: "#898781", "font-size": 12,
       "text-anchor": "middle", "font-family": "system-ui, sans-serif" },
-      "collecting data…");
+      following && viewSpan <= 3600 ? "collecting data…" : "no data in this range");
   }
-  // crosshair placeholder (positioned on hover)
   add("line", { class: "crosshair", x1: -10, x2: -10, y1: PAD.t, y2: PAD.t + plotH,
     stroke: "#898781", "stroke-width": 1, "stroke-dasharray": "3,3" });
 }
 
-// shared crosshair + tooltip across both panels
+// --- hover: shared crosshair + tooltip ---
 const graphsBox = $("graphs");
-graphsBox.addEventListener("mousemove", (ev) => {
+function plotGeom() {
+  const rect = $("graph-level").getBoundingClientRect();
+  return { rect, plotW: rect.width - PAD.l - PAD.r };
+}
+function showTooltip(ev) {
   if (!historyPoints.length) return;
-  const svg0 = $("graph-level");
-  const rect = svg0.getBoundingClientRect();
-  const x = ev.clientX - rect.left;
-  const plotW = rect.width - PAD.l - PAD.r;
-  const frac = Math.min(1, Math.max(0, (x - PAD.l) / plotW));
-  const now = Date.now() / 1000;
-  const tTarget = now - historySeconds + frac * historySeconds;
+  const { rect, plotW } = plotGeom();
+  const frac = Math.min(1, Math.max(0, (ev.clientX - rect.left - PAD.l) / plotW));
+  const tTarget = viewStart() + frac * viewSpan;
   let best = historyPoints[0];
   for (const q of historyPoints)
     if (Math.abs(q.t - tTarget) < Math.abs(best.t - tTarget)) best = q;
-
   for (const p of PANELS) {
     const svg = $(p.svg);
-    const w = svg.clientWidth;
-    const px = PAD.l + (best.t - (now - historySeconds)) / historySeconds * (w - PAD.l - PAD.r);
+    const px = PAD.l + (best.t - viewStart()) / viewSpan * (svg.clientWidth - PAD.l - PAD.r);
     const ch = svg.querySelector(".crosshair");
     if (ch) { ch.setAttribute("x1", px); ch.setAttribute("x2", px); }
   }
   const d = new Date(best.t * 1000);
   const tt = $("graph-tooltip");
   tt.innerHTML =
-    `<div class="tt-time">${d.toLocaleTimeString()}</div>` +
-    `<div class="row"><span class="chipdot" style="background:var(--series-1)"></span>level ${best.level}</div>` +
+    `<div class="tt-time">${d.toLocaleDateString([], { day: "numeric", month: "short" })} ${d.toLocaleTimeString()}</div>` +
+    `<div class="row"><span class="chipdot" style="background:var(--series-1)"></span>${best.level ?? "–"} lux</div>` +
     `<div class="row"><span class="chipdot" style="background:var(--series-2)"></span>LED ${Math.round(best.brightness)}%</div>`;
   tt.classList.remove("hidden");
   const boxRect = graphsBox.getBoundingClientRect();
   let left = ev.clientX - boxRect.left + 14;
-  if (left + 130 > boxRect.width) left -= 150;
+  if (left + 140 > boxRect.width) left -= 160;
   tt.style.left = left + "px";
   tt.style.top = (ev.clientY - boxRect.top + 10) + "px";
-});
-graphsBox.addEventListener("mouseleave", () => {
+}
+function hideTooltip() {
   $("graph-tooltip").classList.add("hidden");
   document.querySelectorAll(".crosshair").forEach(ch => {
     ch.setAttribute("x1", -10); ch.setAttribute("x2", -10);
   });
+}
+
+// --- zoom (wheel) ---
+graphsBox.addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  const { rect, plotW } = plotGeom();
+  const frac = Math.min(1, Math.max(0, (ev.clientX - rect.left - PAD.l) / plotW));
+  const anchor = viewStart() + frac * viewSpan;
+  const factor = Math.pow(1.0015, ev.deltaY);       // smooth for trackpads too
+  const span = Math.min(MAX_SPAN, Math.max(MIN_SPAN, viewSpan * factor));
+  const end = anchor + (1 - frac) * span;
+  changeView(span, end, following && frac > 0.9);
+}, { passive: false });
+
+// --- pan (drag) and pinch on touch ---
+const pointers = new Map();
+let drag = null;
+graphsBox.addEventListener("pointerdown", (ev) => {
+  pointers.set(ev.pointerId, ev.clientX);
+  graphsBox.setPointerCapture(ev.pointerId);
+  drag = { x: ev.clientX, end: viewEnd, span: viewSpan,
+           pinch: pointers.size === 2 ? Math.abs([...pointers.values()][0] - [...pointers.values()][1]) : null };
+  graphsBox.classList.add("dragging");
+  hideTooltip();
 });
+graphsBox.addEventListener("pointermove", (ev) => {
+  if (!drag) { if (ev.pointerType === "mouse") showTooltip(ev); return; }
+  pointers.set(ev.pointerId, ev.clientX);
+  const { plotW } = plotGeom();
+  if (pointers.size === 2 && drag.pinch) {
+    const [a, b] = [...pointers.values()];
+    const dist = Math.max(10, Math.abs(a - b));
+    changeView(drag.span * drag.pinch / dist, drag.end, false);
+    return;
+  }
+  const dt = (ev.clientX - drag.x) / plotW * drag.span;
+  changeView(drag.span, drag.end - dt, false);
+});
+function endDrag(ev) {
+  pointers.delete(ev.pointerId);
+  if (pointers.size === 0) { drag = null; graphsBox.classList.remove("dragging"); }
+}
+graphsBox.addEventListener("pointerup", endDrag);
+graphsBox.addEventListener("pointercancel", endDrag);
+graphsBox.addEventListener("mouseleave", hideTooltip);
+graphsBox.addEventListener("dblclick", () => changeView(viewSpan, Date.now() / 1000, true));
 
 // ---------- gallery ----------
 
@@ -378,4 +470,5 @@ loadHistory();
 loadGallery();
 loadSettings();
 setInterval(pollStatus, 3000);
-setInterval(loadHistory, 10000);
+setInterval(() => { if (following) loadHistory(); }, 10000);
+setRangeButtons();
