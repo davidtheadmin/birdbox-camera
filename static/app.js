@@ -372,6 +372,7 @@ settingsForm.onsubmit = async (ev) => {
 // ---------- boot ----------
 
 window.addEventListener("resize", drawGraphs);
+new ResizeObserver(drawGraphs).observe($("graphs"));
 pollStatus();
 loadHistory();
 loadGallery();

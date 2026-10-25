@@ -166,3 +166,19 @@ input[type=number] {
 
 .muted { color: var(--muted); }
 .hidden { display: none !important; }
+
+/* ---------- fit the first screen (video + side panels) to the window ---------- */
+:root { --top-h: calc(100dvh - 76px); }   /* window height minus header and gaps */
+header { min-height: 56px; }
+@media (min-width: 901px) {
+  main { grid-template-rows: var(--top-h); align-items: stretch; max-width: none; }
+  .video-card { display: flex; flex-direction: column; height: var(--top-h); }
+  .video-wrap { flex: 1; min-height: 0; }
+  #stream { height: 100%; aspect-ratio: auto; }
+  .side { height: var(--top-h); grid-template-rows: auto minmax(0, 1fr); }
+  .side > .card:last-child { display: flex; flex-direction: column; min-height: 0; }
+  #graphs { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .panel svg { flex: 1; min-height: 60px; height: auto; }
+  .wide { grid-row: auto; }
+}
