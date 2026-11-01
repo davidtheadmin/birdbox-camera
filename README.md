@@ -5,6 +5,18 @@ brief). One Flask process owns everything: the sensor/LED loop, the camera
 pipeline, and the web server — required because lgpio locks GPIO pins
 per-process.
 
+## New unit from a fresh SD card
+
+1. Raspberry Pi Imager: Raspberry Pi 3 → Raspberry Pi OS Lite (64-bit), OS
+   customisation with hostname `birdcamN`, user `birdcam`, WiFi, SSH on.
+2. Copy `setup/birdcam-setup.sh` onto the card's boot partition (`bootfs`).
+3. Boot, SSH in, `sudo bash /boot/firmware/birdcam-setup.sh` — installs
+   packages, overlays, the app and its service, then reboots.
+4. `sudo bash /boot/firmware/birdcam-setup.sh --check` verifies camera,
+   PWM, light sensor, mic and service.
+
+The manual steps it automates:
+
 ## Pi setup (Raspberry Pi OS Lite, Pi 3A+ with Birdbox pHAT)
 
 ```sh
