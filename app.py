@@ -3,8 +3,9 @@
     python3 app.py            # on the Pi: real GPIO + rpicam-vid
     BIRDCAM_MOCK=1 python3 app.py   # dev laptop: simulated sensor + camera
 
-This process is the single owner of GPIO 17/18 and the camera; the sensor/
-LED loop and the camera pipeline run as background threads inside it.
+This process is the single owner of the PWM/I2C hardware, the camera and the
+microphone; the sensor/LED loop, the camera pipeline and the audio capture run
+as background threads inside it.
 """
 import atexit
 import json
@@ -15,6 +16,8 @@ from pathlib import Path
 
 from flask import (Flask, Response, jsonify, render_template, request,
                    send_from_directory, abort)
+
+from audio import AudioManager
 
 from camera import CameraManager
 from cleanup import CleanupManager
@@ -33,6 +36,9 @@ CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
 hardware = create_hardware()
 led = LedController(hardware, config)
 camera = CameraManager(config, CAPTURES_DIR)
+audio = AudioManager(config)
+audio.attach_camera(camera)
+camera.audio = audio
 motion = MotionDetector(camera, config)
 cleanup = CleanupManager(config, CAPTURES_DIR, camera)
 
@@ -41,6 +47,7 @@ def _shutdown():
     cleanup.stop()
     motion.stop()
     camera.stop()
+    audio.stop()
     led.stop()
     hardware.cleanup()
 
@@ -143,9 +150,41 @@ def motion_set():
     return jsonify(motion.state())
 
 
+# ---------- audio ----------
+
+@app.route("/audio/live")
+def audio_live():
+    """Endless WAV stream of the mic for an <audio> element."""
+    return Response(audio.live_stream(), mimetype="audio/wav",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.route("/api/audio")
+def audio_get():
+    return jsonify(audio.state())
+
+
+@app.route("/api/audio", methods=["POST"])
+def audio_set():
+    data = request.get_json(silent=True) or {}
+    keys = {"enabled": "audio_enabled", "trigger": "sound_trigger"}
+    changes = {}
+    for k, cfg_key in keys.items():
+        if k in data:
+            changes[cfg_key] = 1 if data[k] else 0
+    if "threshold_db" in data:
+        changes["sound_threshold_db"] = data["threshold_db"]
+    if "gain_db" in data:
+        changes["audio_gain_db"] = data["gain_db"]
+    _, errors = config.update(changes)
+    if errors:
+        return jsonify({"error": errors}), 400
+    return jsonify(audio.state())
+
+
 # ---------- gallery ----------
 
-MEDIA_EXTS = {".jpg", ".mjpeg", ".mp4"}
+MEDIA_EXTS = {".jpg", ".mjpeg", ".mp4", ".wav"}  # .wav: served, not listed
 
 
 def _safe_media_path(name):
@@ -164,7 +203,7 @@ def gallery():
     transcoding = camera.transcoding_names()
     items = []
     for path in CAPTURES_DIR.iterdir():
-        if path.suffix not in MEDIA_EXTS or not path.is_file():
+        if path.suffix not in MEDIA_EXTS or path.suffix == ".wav" or not path.is_file():
             continue
         kind = kinds.get(path.suffix, "image")
         item = {
@@ -180,6 +219,8 @@ def gallery():
                     item.update(json.loads(sidecar.read_text()))
                 except (ValueError, OSError):
                     pass
+        if kind == "mjpeg" and path.with_suffix(".wav").is_file():
+            item["audio_file"] = path.with_suffix(".wav").name
         if path.name in transcoding:
             item["processing"] = True
         items.append(item)
@@ -202,6 +243,8 @@ def thumb(name):
     path = _safe_media_path(name)
     if path.suffix == ".jpg":
         return send_from_directory(CAPTURES_DIR, name)
+    if path.suffix == ".wav":
+        abort(404)
     if path.suffix == ".mp4":
         frame = camera.mp4_thumbnail(path)
     else:
@@ -247,10 +290,13 @@ def media_delete(name):
     rec_state = camera.recording_state()
     if rec_state.get("file") == name:
         return jsonify({"error": "recording in progress"}), 409
+    if path.suffix == ".wav":
+        return jsonify({"error": "delete the recording, not its audio"}), 400
     path.unlink()
-    sidecar = path.with_suffix(".json")
-    if path.suffix in (".mjpeg", ".mp4") and sidecar.exists():
-        sidecar.unlink()
+    if path.suffix in (".mjpeg", ".mp4"):
+        for extra in (path.with_suffix(".json"), path.with_suffix(".wav")):
+            if extra.exists():
+                extra.unlink()
     return jsonify({"deleted": name})
 
 
@@ -263,8 +309,9 @@ def api_status():
         "led": led.get_state(),
         "recording": camera.recording_state(),
         "motion": motion.state(),
+        "audio": audio.state(),
         "cleanup": cleanup.state(),
-        "mock": {"gpio": hardware.mock, "camera": camera.mock},
+        "mock": {"gpio": hardware.mock, "camera": camera.mock, "audio": audio.mock},
         "server_time": time.time(),
     })
     return jsonify(s)
@@ -322,10 +369,11 @@ def config_set():
 if __name__ == "__main__":
     led.start()
     camera.start()
+    audio.start()
     motion.start()
     cleanup.start()
     atexit.register(_shutdown)
-    mock_note = " (MOCK mode)" if hardware.mock or camera.mock else ""
+    mock_note = " (MOCK mode)" if hardware.mock or camera.mock or audio.mock else ""
     print(f"birdcam ui on http://0.0.0.0:{config['port']}{mock_note}")
     # threaded=True: each MJPEG viewer holds a connection open
     app.run(host="0.0.0.0", port=config["port"], threaded=True,

@@ -55,6 +55,9 @@ class CameraManager:
         self._rec_path = None
         self._rec_started = None
         self._rec_frames = 0
+        self._rec_audio = False
+
+        self.audio = None           # AudioManager, if a mic is attached
 
         self._transcoding = set()   # .mjpeg names currently being converted to .mp4
         self._transcode_lock = threading.Lock()
@@ -149,6 +152,7 @@ class CameraManager:
                 "recording": True,
                 "duration": round(time.time() - self._rec_started, 1),
                 "file": self._rec_path.name,
+                "audio": self._rec_audio,
             }
 
     def start_recording(self):
@@ -160,6 +164,10 @@ class CameraManager:
             self._rec_file = open(self._rec_path, "wb")
             self._rec_started = time.time()
             self._rec_frames = 0
+            # Audio starts in the same lock so both files begin together.
+            # (AudioManager never takes this lock, so no deadlock.)
+            self._rec_audio = bool(
+                self.audio and self.audio.start_recording(self._rec_path.with_suffix(".wav")))
             return name
 
     def stop_recording(self):
@@ -167,6 +175,8 @@ class CameraManager:
             if not self._rec_file:
                 raise RuntimeError("not recording")
             self._rec_file.close()
+            if self.audio:
+                self.audio.stop_recording()
             duration = time.time() - self._rec_started
             meta = {
                 "frames": self._rec_frames,
@@ -174,6 +184,7 @@ class CameraManager:
                 "fps": round(self._rec_frames / duration, 2) if duration > 0 else 0,
                 "width": self.config["stream_width"],
                 "height": self.config["stream_height"],
+                "audio": self._rec_audio,
             }
             rec_path = self._rec_path
             rec_path.with_suffix(".json").write_text(json.dumps(meta))
@@ -213,38 +224,51 @@ class CameraManager:
                          name="transcode", daemon=True).start()
 
     def _transcode_worker(self, mjpeg_path, meta):
-        """mjpeg -> H.264 mp4. Tries the Pi hardware encoder, falls back to
-        software libx264. On success the .mjpeg is replaced by the .mp4."""
+        """mjpeg (+ wav) -> H.264/AAC mp4. Tries the Pi hardware encoder, falls
+        back to software libx264, and as a last resort drops the audio. On
+        success the .mjpeg and .wav are replaced by the .mp4."""
         fps = meta.get("fps") or self.config["stream_fps"] or 15
         mp4_path = mjpeg_path.with_suffix(".mp4")
         tmp = mjpeg_path.with_suffix(".mp4.tmp")
-        head = ["ffmpeg", "-y", "-loglevel", "error",
-                "-f", "mjpeg", "-r", str(fps), "-i", str(mjpeg_path)]
+        wav_path = mjpeg_path.with_suffix(".wav")
+        has_wav = wav_path.is_file() and wav_path.stat().st_size > 44
+        video_in = ["-f", "mjpeg", "-r", str(fps), "-i", str(mjpeg_path)]
+        audio_in = ["-i", str(wav_path), "-map", "0:v:0", "-map", "1:a:0",
+                    "-c:a", "aac", "-b:a", "96k"]
         tail = ["-pix_fmt", "yuv420p", "-movflags", "+faststart", "-f", "mp4", str(tmp)]
-        attempts = [
+        encoders = [
             ["-c:v", "h264_v4l2m2m", "-b:v", "4M"],                 # Pi hardware encoder
             ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"],  # software fallback
         ]
-        ok = False
-        for enc in attempts:
+        attempts = []
+        if has_wav:
+            attempts += [(enc, True) for enc in encoders]
+        attempts += [(enc, False) for enc in encoders]
+        ok = muxed_audio = False
+        for enc, with_audio in attempts:
+            cmd = (["ffmpeg", "-y", "-loglevel", "error"] + video_in
+                   + (audio_in if with_audio else []) + enc + tail)
             try:
-                r = subprocess.run(head + enc + tail,
+                r = subprocess.run(cmd,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except OSError:
                 break
             if r.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
-                ok = True
+                ok, muxed_audio = True, with_audio
                 break
             if tmp.exists():
                 tmp.unlink()
         if ok:
             tmp.replace(mp4_path)
-            meta = dict(meta, container="mp4")
+            meta = dict(meta, container="mp4", audio=muxed_audio)
             mp4_path.with_suffix(".json").write_text(json.dumps(meta))
-            try:
-                mjpeg_path.unlink()  # sidecar has the shared stem, so it stays
-            except OSError:
-                pass
+            # sidecar has the shared stem, so it stays. The .wav goes only if
+            # it made it into the mp4; otherwise it stays as the audio copy.
+            for old in [mjpeg_path] + ([wav_path] if muxed_audio else []):
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
             print(f"[camera] transcoded {mjpeg_path.name} -> {mp4_path.name}")
         else:
             if tmp.exists():

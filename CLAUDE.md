@@ -19,10 +19,12 @@ prototype and still applies to it where it says so.
 | Illumination | 6 IR LEDs in series from 12 V, op-amp constant-current sink; current set by **hardware PWM0 on GPIO12** (25 kHz, filtered to DC), 0–100 % = 0–94 mA. Driven via `/sys/class/pwm/pwmchip0` |
 | Light sensor | **VEML7700** on I2C bus 1, address 0x10, read in lux |
 | AUX | switched 12 V output on GPIO13 (PWM1), not used by the app yet |
+| Microphone | I2S MEMS mic (INMP441 or ICS-43434) on the pHAT's I2S header: BCK GPIO18, LR GPIO19, data GPIO20, L/R select to GND (left). `googlevoicehat-soundcard` overlay, fixed 48 kHz. GPIO21 (AMP) is free for a MAX98357A on the same overlay |
 
-Pi setup: `dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4` in
+Pi setup: `dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4`,
+`dtparam=i2s=on` and `dtoverlay=googlevoicehat-soundcard` in
 `/boot/firmware/config.txt`, `sudo raspi-config nonint do_i2c 0`, packages
-`python3-flask python3-smbus2 python3-pil ffmpeg i2c-tools`. Auto-dimming is
+`python3-flask python3-smbus2 python3-pil python3-numpy ffmpeg i2c-tools alsa-utils`. Auto-dimming is
 on a log-lux scale (`lux_off`, `lux_full`); sensor history is kept 6 h raw
 plus 14 days of minute averages in `history.csv`. The LDR issues below
 (saturation, LED feedback, hysteresis/`sample_dark`) don't apply to these
@@ -50,6 +52,8 @@ camera.py         CameraManager: rpicam-vid MJPEG pipeline, snapshots,
                   recording, mp4 transcode worker, thumbnails
 ledcontrol.py     LED auto/manual control loop + sensor history ring buffer
 hardware.py       GPIO, PWM, LDR read, mock-mode fallback
+audio.py          AudioManager: arecord pipeline for the I2S mic, level meter,
+                  .wav per recording, /audio/live stream, sound trigger
 motion.py         Motion detection by frame differencing (needs Pillow)
 cleanup.py        Pi-side card-space cleanup loop; see "Recording retention"
 config.py         DEFAULTS + EDITABLE validation, persisted to config.json
@@ -67,6 +71,13 @@ git-ignored) holds recordings + `.json` sidecars with duration/fps metadata.
 
 - **Only one process can own the camera.** `rpicam-still` fails with "Pipeline
   handler in use" while the app runs — `sudo systemctl stop birdcam` first.
+- **Only one process can own the mic.** `arecord` on the card fails with
+  "Device or resource busy" while the app runs — stop `birdcam` to test by hand.
+- **Recordings may have a `.wav` with the same stem.** It starts/stops inside
+  `CameraManager`'s recording lock; delete, cleanup.py and the PC archive prune
+  remove it with its recording; `convert_to_mp4` muxes it in (AAC) and deletes
+  it only if the mux succeeded. Sound auto-record (`sound_trigger`) reuses
+  `motion_cooldown` and, like motion, only stops recordings it started.
 - **rpicam flags are start-up only.** Changing flip, focus or stream settings
   calls `camera.restart_pipeline()`. The relevant keys are listed in
   `config_set()` in `app.py`; add new camera flags there too.

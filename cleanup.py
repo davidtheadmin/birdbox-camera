@@ -124,10 +124,11 @@ class CleanupManager:
         except OSError as e:
             print(f"[cleanup] failed to delete {path.name}: {e}")
             return False
-        try:
-            sidecar.unlink()
-        except OSError:
-            pass  # no sidecar, or already gone — fine
+        for extra in (sidecar, path.with_suffix(".wav")):
+            try:
+                extra.unlink()
+            except OSError:
+                pass  # no sidecar/audio, or already gone — fine
         if archived:
             print(f"[cleanup] deleted {path.name} ({size} bytes) — archived")
         else:

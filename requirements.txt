@@ -1,5 +1,7 @@
 flask>=3.0
 pillow>=10.0   # required on the Pi for motion detection (and the dev mock camera)
+numpy          # audio gain + level meter (python3-numpy on the Pi); works without, minus gain
 
 # System packages (not pip):
 #   ffmpeg  — required for MP4 recordings; without it, recordings stay MJPEG
+#   alsa-utils — arecord, for the I2S mic

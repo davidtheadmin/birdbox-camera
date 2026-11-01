@@ -47,10 +47,11 @@ async function pollStatus() {
     $("chip-temp").textContent = `\u{1F321}️ ${s.cpu_temp != null ? s.cpu_temp + "°C" : "n/a"}`;
     $("chip-wifi").textContent = `\u{1F4F6} ${s.wifi_dbm != null ? s.wifi_dbm + " dBm" : "n/a"}`;
     $("chip-disk").textContent = `\u{1F4BE} ${fmtBytes(s.disk.free)} free`;
-    $("chip-mock").classList.toggle("hidden", !(s.mock.gpio || s.mock.camera));
+    $("chip-mock").classList.toggle("hidden", !(s.mock.gpio || s.mock.camera || s.mock.audio));
     updateLed(s.led);
     updateRec(s.recording);
     updateMotion(s.motion);
+    updateSound(s.audio);
   } catch (e) { /* transient; keep last values */ }
 }
 
@@ -203,6 +204,79 @@ motionSens.addEventListener("input", () => {
   }
 });
 motionSens.addEventListener("change", () => { motionSensBusy = false; });
+
+// ---------- sound (I2S mic) ----------
+
+const SOUND_MIN_DB = -80;            // left edge of the meter
+const soundThresh = $("sound-threshold");
+let soundThreshBusy = false;
+const dbPct = db => Math.max(0, Math.min(100, (db - SOUND_MIN_DB) / -SOUND_MIN_DB * 100));
+
+function updateSound(a) {
+  if (!a) return;
+  const t = a.trigger;
+  document.querySelectorAll("#sound-toggle button").forEach(b =>
+    b.classList.toggle("active", (b.dataset.on === "1") === t.enabled));
+  const live = a.available && a.rms_db != null;
+  const bar = $("sound-bar");
+  bar.style.width = live ? dbPct(a.rms_db).toFixed(1) + "%" : "0%";
+  bar.classList.toggle("hot", live && a.rms_db > t.threshold_db);
+  $("sound-peak").style.left = live ? dbPct(a.peak_db).toFixed(1) + "%" : "0%";
+  $("sound-thresh").style.left = dbPct(t.threshold_db).toFixed(1) + "%";
+  if (!soundThreshBusy && document.activeElement !== soundThresh)
+    soundThresh.value = t.threshold_db;
+  $("sound-threshold-val").textContent = `${(+soundThresh.value).toFixed(0)} dBFS`;
+  $("sound-status").textContent =
+    !a.enabled ? "mic off"
+    : !live ? "no signal" + (a.error ? ` — ${a.error}` : "")
+    : t.recording ? `loud — recording (${a.rms_db.toFixed(0)} dBFS)`
+    : `${a.rms_db.toFixed(0)} dBFS` + (t.enabled ? " · armed" : "");
+}
+
+// The meter wants faster updates than the 3 s status poll.
+setInterval(async () => {
+  if (document.hidden) return;
+  try { updateSound(await api("/api/audio")); } catch (e) {}
+}, 500);
+
+document.querySelectorAll("#sound-toggle button").forEach(btn => {
+  btn.onclick = async () => {
+    try { updateSound(await api("/api/audio", "POST", { trigger: btn.dataset.on === "1" })); }
+    catch (e) { toast("Error: " + e.message); }
+  };
+});
+
+let soundThreshTimer = null;
+soundThresh.addEventListener("input", () => {
+  soundThreshBusy = true;
+  $("sound-threshold-val").textContent = `${(+soundThresh.value).toFixed(0)} dBFS`;
+  $("sound-thresh").style.left = dbPct(+soundThresh.value).toFixed(1) + "%";
+  if (!soundThreshTimer) {
+    soundThreshTimer = setTimeout(async () => {
+      soundThreshTimer = null;
+      try { await api("/api/audio", "POST", { threshold_db: +soundThresh.value }); } catch (e) {}
+    }, 200);
+  }
+});
+soundThresh.addEventListener("change", () => { soundThreshBusy = false; });
+
+// Live listening: an endless WAV stream. Removing src closes the connection.
+const liveAudio = $("live-audio");
+function stopListening() {
+  liveAudio.pause();
+  liveAudio.removeAttribute("src");
+  liveAudio.load();
+  $("btn-listen").classList.remove("on");
+  $("btn-listen").innerHTML = "&#128264; Listen";
+}
+$("btn-listen").onclick = () => {
+  if ($("btn-listen").classList.contains("on")) return stopListening();
+  liveAudio.src = "/audio/live?t=" + Date.now();
+  $("btn-listen").classList.add("on");
+  $("btn-listen").innerHTML = "&#128266; Stop";
+  liveAudio.play().catch(e => { toast("Can't play audio: " + e.message); stopListening(); });
+};
+liveAudio.onerror = () => { if ($("btn-listen").classList.contains("on")) stopListening(); };
 
 // ---------- sensor history graphs ----------
 // View window [viewEnd - viewSpan, viewEnd]. Mouse wheel zooms around the
@@ -472,6 +546,7 @@ async function loadGallery() {
       const div = document.createElement("div");
       div.className = "gitem";
       const dur = item.duration ? ` · ${item.duration.toFixed(0)}s` : "";
+      const snd = (item.audio || item.audio_file) ? " · ♪" : "";
       const badge = item.processing ? '<span class="badge-video">converting…</span>'
         : item.type === "mp4" ? '<span class="badge-video">▶ mp4</span>'
         : item.type === "mjpeg" ? '<span class="badge-video">▶ mjpeg</span>'
@@ -481,9 +556,10 @@ async function loadGallery() {
       div.innerHTML =
         `<div class="gthumb"><img loading="lazy" src="/thumb/${encodeURIComponent(item.name)}" alt="${item.name}">` +
         badge + `</div>` +
-        `<div class="gmeta">${fmtDate(item.mtime)}<span class="muted">${fmtBytes(item.size)}${dur}</span></div>` +
+        `<div class="gmeta">${fmtDate(item.mtime)}<span class="muted">${fmtBytes(item.size)}${dur}${snd}</span></div>` +
         `<div class="gactions">` +
         `<a href="/media/${encodeURIComponent(item.name)}?download=1">download</a>` +
+        (item.audio_file ? `<a href="/media/${encodeURIComponent(item.audio_file)}?download=1">wav</a>` : "") +
         convertBtn +
         `<button class="danger">delete</button></div>`;
       if (item.processing) div.classList.add("processing");
@@ -535,12 +611,20 @@ function openModal(item) {
       ? `/replay/${encodeURIComponent(item.name)}`
       : `/media/${encodeURIComponent(item.name)}`;
     $("modal-caption").textContent = item.name + (item.type === "mjpeg" ? " (replay)" : "");
+    // mjpeg replay has no sound track; play the recording's .wav alongside it
+    const au = $("modal-audio");
+    if (item.type === "mjpeg" && item.audio_file) {
+      au.src = `/media/${encodeURIComponent(item.audio_file)}`;
+      au.play().catch(() => {});
+    }
   }
   $("modal").classList.remove("hidden");
 }
 $("modal").onclick = () => {
   $("modal").classList.add("hidden");
   $("modal-img").src = "";          // stop the replay stream
+  const au = $("modal-audio");
+  au.pause(); au.removeAttribute("src"); au.load();
   const vid = $("modal-video");
   vid.pause?.(); vid.removeAttribute("src"); vid.load?.();
 };

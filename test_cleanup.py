@@ -122,6 +122,26 @@ class CleanupTestCase(unittest.TestCase):
         self.assertEqual(mgr._last_deleted, 2)
         self.assertFalse(mgr._emergency)
 
+    def test_audio_wav_follows_its_recording(self):
+        rec_a = make_recording(self.tmp, BASE + 2000, 2000)
+        rec_b = make_recording(self.tmp, BASE + 3000, 2000)
+        for rec in (rec_a, rec_b):
+            rec.with_suffix(".wav").write_bytes(b"x" * 300)
+        self.write_marker(BASE + 2000)  # only rec_a archived
+
+        self.patch_capacity(6000)  # free = 6000 - 4000 = 2000
+        config = {"cleanup_enabled": 1, "min_free_gb": 5000, "emergency_free_gb": 1000}
+        mgr = self.make_manager(config)
+
+        mgr._cleanup_once()
+
+        names = self.names()
+        self.assertNotIn(rec_a.name, names)
+        self.assertNotIn(rec_a.with_suffix(".wav").name, names, "audio must go with its recording")
+        self.assertIn(rec_b.name, names)
+        self.assertIn(rec_b.with_suffix(".wav").name, names, "unarchived audio must survive")
+        self.assertEqual(mgr._last_deleted, 1, "a .wav is never a candidate on its own")
+
     def test_stops_at_unarchived_boundary_even_if_below_target(self):
         # Only one archived file exists; deleting it isn't enough to reach
         # min_free_gb, but the newer, unarchived file must still survive

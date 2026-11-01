@@ -37,6 +37,14 @@ DEFAULTS = {
     "motion_interval": 1.0,   # seconds between motion samples
     "motion_cooldown": 6.0,   # keep recording this long after the last motion
 
+    # --- audio (I2S mic on the pHAT; see audio.py) ---
+    "audio_enabled": 1,        # run the mic at all
+    "audio_record": 1,         # write a .wav alongside every video recording
+    "audio_gain_db": 20.0,     # digital gain; MEMS mics are quiet at bird distances
+    "audio_device": "auto",    # ALSA device, or "auto" to find the I2S card
+    "sound_trigger": 0,        # start a recording when it gets loud
+    "sound_threshold_db": -40.0,  # RMS level (dBFS, after gain) that counts as loud
+
     # --- cleanup (Pi-side card space management; see cleanup.py) ---
     "cleanup_enabled": 1,        # master switch
     "min_free_gb": 8.0,          # target free space on the captures filesystem
@@ -69,6 +77,11 @@ EDITABLE = {
     "motion_sensitivity": (int, 1, 100),
     "motion_interval": (float, 0.2, 10.0),
     "motion_cooldown": (float, 1.0, 120.0),
+    "audio_enabled": (int, 0, 1),
+    "audio_record": (int, 0, 1),
+    "audio_gain_db": (float, 0.0, 40.0),
+    "sound_trigger": (int, 0, 1),
+    "sound_threshold_db": (float, -90.0, 0.0),
     "cleanup_enabled": (int, 0, 1),
     "min_free_gb": (float, 0.5, 500.0),
     "emergency_free_gb": (float, 0.1, 500.0),

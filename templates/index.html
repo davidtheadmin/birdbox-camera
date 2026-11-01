@@ -79,6 +79,33 @@
       </div>
     </section>
 
+    <!-- sound (I2S mic) -->
+    <section class="card" id="sound-card">
+      <div class="graph-head">
+        <h2>Sound</h2>
+        <div class="segmented small" id="sound-toggle">
+          <button data-on="0" class="active">Off</button>
+          <button data-on="1">Auto-record</button>
+        </div>
+      </div>
+      <div class="motion-meter" title="Mic level (dBFS) vs. trigger level">
+        <div id="sound-bar"></div>
+        <div id="sound-peak"></div>
+        <div id="sound-thresh"></div>
+      </div>
+      <div class="motion-stats">
+        <span id="sound-status" class="muted">–</span>
+        <button id="btn-listen" class="small-btn">&#128264; Listen</button>
+      </div>
+      <div class="motion-stats">
+        <label class="motion-sens">trigger level
+          <input type="range" id="sound-threshold" min="-90" max="0" step="1" value="-40">
+        </label>
+        <span id="sound-threshold-val" class="muted">–</span>
+      </div>
+      <audio id="live-audio" preload="none"></audio>
+    </section>
+
     <!-- sensor graph -->
     <section class="card">
       <div class="graph-head">
@@ -167,6 +194,15 @@
         <label>Motion cooldown (s) <input name="motion_cooldown" type="number" step="0.5" min="1" max="120"></label>
       </fieldset>
       <fieldset>
+        <legend>Audio <span class="muted">(I2S mic on the pHAT)</span></legend>
+        <label class="check"><input name="audio_enabled" type="checkbox"> Mic on</label>
+        <label class="check"><input name="audio_record" type="checkbox"> Record sound with video</label>
+        <label>Gain (dB) <span class="muted">(raise if the meter barely moves)</span>
+          <input name="audio_gain_db" type="number" step="1" min="0" max="40"></label>
+        <label>Sound trigger level (dBFS) <input name="sound_threshold_db" type="number" step="1" min="-90" max="0"></label>
+        <span class="muted flip-hint">Sound auto-record stops after the motion cooldown of quiet.</span>
+      </fieldset>
+      <fieldset>
         <legend>Cleanup <span class="muted">(deletes oldest recordings to keep the card from filling)</span></legend>
         <label class="check"><input name="cleanup_enabled" type="checkbox"> Enabled</label>
         <label>Target free space (GB) <input name="min_free_gb" type="number" step="0.5" min="0.5" max="500"></label>
@@ -187,6 +223,7 @@
   <div id="modal-body">
     <img id="modal-img" alt="">
     <video id="modal-video" class="hidden" controls playsinline></video>
+    <audio id="modal-audio" preload="none"></audio>
     <div id="modal-caption" class="muted"></div>
   </div>
 </div>

@@ -8,16 +8,20 @@ per-process.
 ## Pi setup (Raspberry Pi OS Lite, Pi 3A+ with Birdbox pHAT)
 
 ```sh
-sudo apt install -y git python3-flask python3-smbus2 python3-pil ffmpeg i2c-tools
+sudo apt install -y git python3-flask python3-smbus2 python3-pil python3-numpy ffmpeg i2c-tools alsa-utils
 sudo raspi-config nonint do_i2c 0
 echo 'dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4' | sudo tee -a /boot/firmware/config.txt
+printf 'dtparam=i2s=on\ndtoverlay=googlevoicehat-soundcard\n' | sudo tee -a /boot/firmware/config.txt  # I2S mic
 echo 'birdcam ALL=(root) NOPASSWD: /usr/sbin/shutdown' | sudo tee /etc/sudoers.d/birdcam-power
 sudo chmod 440 /etc/sudoers.d/birdcam-power   # for the restart/power buttons
 sudo reboot
 ```
 
 Checks: `rpicam-hello --list-cameras` lists `imx708_wide_noir`,
-`i2cdetect -y 1` shows `10`, `ls /sys/class/pwm` shows `pwmchip0`.
+`i2cdetect -y 1` shows `10`, `ls /sys/class/pwm` shows `pwmchip0`,
+`arecord -l` lists a `sndrpigooglevoi` card (the mic), and `groups` for
+`birdcam` includes `audio`. Quick mic test with the app stopped:
+`arecord -D plughw:CARD=sndrpigooglevoi -c1 -r48000 -f S16_LE -d5 t.wav`.
 
 ## Run
 
@@ -47,11 +51,13 @@ Mock mode also kicks in automatically when the PWM chip, `smbus2` or
 | `hardware.py` | Birdbox pHAT: IR LED current via hardware PWM0 (GPIO12), VEML7700 light sensor in lux (I2C 0x10) + mock |
 | `ledcontrol.py` | background sensor→LED loop (absorbed from `birdcam_lights.py`), auto/manual, history |
 | `camera.py` | single rpicam-vid MJPEG pipeline: live stream, snapshots, recordings + mock camera |
+| `audio.py` | single arecord pipeline for the I2S mic: level meter, `.wav` alongside each recording, live listen (`/audio/live`), sound trigger + mock |
 | `status.py` | uptime / CPU temp / wifi / disk from /proc and /sys |
 | `config.py` | defaults + `config.json` persistence, edited from the settings UI |
 
 Captures land in `captures/` (gitignored). Recordings are raw `.mjpeg`
-(concatenated JPEG frames) with a `.json` sidecar; the gallery plays them
+(concatenated JPEG frames) with a `.json` sidecar and, with the mic, a `.wav`
+of the same name ("to mp4" muxes it in as AAC and removes the `.wav`); the gallery plays them
 back by re-streaming, VLC plays the files directly, and
 `ffmpeg -framerate <fps> -i rec.mjpeg -c copy rec.avi` remuxes if needed.
 

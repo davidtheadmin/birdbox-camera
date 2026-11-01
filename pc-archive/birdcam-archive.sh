@@ -138,6 +138,8 @@ else
         [ -n "$ctime" ] || ctime=$(stat -c %Y "$f")
         [ "$ctime" -le "$age_cutoff" ] || continue
         size=$(stat -c %s "$f")
+        wav="${f%.*}.wav"
+        [ -f "$wav" ] && size=$(( size + $(stat -c %s "$wav") ))
         candidates+=("$ctime|$size|$f")
     done
     shopt -u nullglob
@@ -152,9 +154,9 @@ else
             size="${rest%%|*}"; path="${rest#*|}"
             sidecar="${path%.*}.json"
             if [ "$DRY_RUN" -eq 1 ]; then
-                log "[dry-run] would delete $path ($size bytes, captured $ctime)"
+                log "[dry-run] would delete $path (+ .json/.wav; $size bytes, captured $ctime)"
             else
-                rm -f -- "$path" "$sidecar"
+                rm -f -- "$path" "$sidecar" "${path%.*}.wav"
                 log "pruned $path ($size bytes)"
             fi
             total=$(( total - size ))
