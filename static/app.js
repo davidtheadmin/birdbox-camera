@@ -565,6 +565,8 @@ async function loadGallery() {
         (item.audio_file ? `<a href="/media/${encodeURIComponent(item.audio_file)}?download=1" title="Download sound">&#11015; wav</a>` : "") +
         convertBtn +
         `<button class="danger" title="Delete">&#10005;</button></div>`;
+      const thumb = div.querySelector("img");
+      thumb.onload = () => thumb.classList.toggle("tall", thumb.naturalHeight > thumb.naturalWidth);
       if (item.processing) div.classList.add("processing");
       else div.querySelector("img").onclick = () => openModal(item);
       const cb = div.querySelector(".convert");
@@ -610,6 +612,7 @@ function openModal(item) {
   } else {
     vid.classList.add("hidden"); vid.pause?.(); vid.removeAttribute("src");
     img.classList.remove("hidden");
+    img.classList.toggle("portrait", item.type === "mjpeg" && item.rotate === 90);
     img.src = item.type === "mjpeg"
       ? `/replay/${encodeURIComponent(item.name)}`
       : `/media/${encodeURIComponent(item.name)}`;
@@ -653,16 +656,33 @@ document.querySelectorAll("#fov-toggle button").forEach(btn => {
 });
 api("/api/config").then(c => updateFov(c.fov)).catch(() => {});
 
-// Rotate 180° = flip both axes. Toggling both also composes correctly with a
-// mirror-only setting.
+// ---------- rotation ----------
+// 180° is done by the camera; for 90/270 the browser turns the live image.
+const videoWrap = document.querySelector(".video-wrap");
+let rotation = 0;
+
+function applyRotation(deg) {
+  rotation = deg;
+  $("btn-rotate").innerHTML = `&#10227; ${deg}°`;
+  videoWrap.classList.toggle("portrait", deg === 90 || deg === 270);
+  sizeRotated();
+}
+function sizeRotated() {
+  const r = videoWrap.getBoundingClientRect();
+  videoWrap.style.setProperty("--wrap-w", r.width + "px");
+  videoWrap.style.setProperty("--wrap-h", r.height + "px");
+}
+new ResizeObserver(sizeRotated).observe(videoWrap);
+
 $("btn-rotate").onclick = async () => {
+  const next = (rotation + 90) % 360;
   try {
-    const c = await api("/api/config");
-    await api("/api/config", "POST", { flip_h: c.flip_h ? 0 : 1, flip_v: c.flip_v ? 0 : 1 });
-    toast("Rotated 180° — camera restarting…");
-    loadSettings();
+    await api("/api/config", "POST", { rotation: next });
+    applyRotation(next);
+    toast(`Rotated to ${next}° — camera restarting…`);
   } catch (e) { toast("Error: " + e.message); }
 };
+api("/api/config").then(c => applyRotation(c.rotation || 0)).catch(() => {});
 
 // ---------- settings ----------
 

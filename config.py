@@ -25,6 +25,8 @@ DEFAULTS = {
     "stream_quality": 80,  # MJPEG quality 1-100
     "flip_h": 0,           # mirror horizontally (--hflip)
     "flip_v": 0,           # mirror vertically (--vflip); both = 180° for an upside-down mount
+    "rotation": 0,         # 0/90/180/270, clockwise. 180 is done by the camera,
+                           # 90/270 in software (browser, snapshots, mp4)
     "fov": "wide",         # wide = whole sensor (2304x1296 mode, full 120°);
                            # zoom = centre crop (1536x864 mode, ~1.5x narrower)
 
@@ -49,6 +51,8 @@ DEFAULTS = {
     "audio_filter": 1,         # band-pass: drop rumble and high-frequency crackle
     "audio_low_hz": 200.0,     # below this is cut (hum, wind, handling)
     "audio_high_hz": 12000.0,  # above this is cut (board/WiFi pickup)
+    "audio_denoise": 1,        # learn the steady background (tones, hiss) and turn it down
+    "audio_denoise_db": 20.0,  # max reduction of that background
     "audio_device": "auto",    # ALSA device, or "auto" to find the I2S card
     "sound_trigger": 0,        # start a recording when it gets loud
     "sound_threshold_db": -40.0,  # RMS level (dBFS, after gain) that counts as loud
@@ -79,6 +83,7 @@ EDITABLE = {
     "flip_h": (int, 0, 1),
     "flip_v": (int, 0, 1),
     "fov": (str, ["wide", "zoom"]),
+    "rotation": (int, [0, 90, 180, 270]),
     "af_mode": (str, ["continuous", "manual"]),
     "af_range": (str, ["normal", "macro", "full"]),
     "lens_position": (float, 0.0, 10.0),
@@ -93,6 +98,8 @@ EDITABLE = {
     "audio_filter": (int, 0, 1),
     "audio_low_hz": (float, 20.0, 2000.0),
     "audio_high_hz": (float, 2000.0, 23000.0),
+    "audio_denoise": (int, 0, 1),
+    "audio_denoise_db": (float, 3.0, 40.0),
     "sound_trigger": (int, 0, 1),
     "sound_threshold_db": (float, -90.0, 0.0),
     "cleanup_enabled": (int, 0, 1),

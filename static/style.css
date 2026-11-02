@@ -67,6 +67,14 @@ main {
 .video-card { padding: 0; overflow: hidden; }
 .video-wrap { position: relative; background: #000; }
 #stream { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; }
+/* portrait: the img box gets the wrapper's swapped size, then turns 90° */
+.video-wrap.portrait { overflow: hidden; aspect-ratio: 9 / 16; width: min(100%, calc(75vh * 9 / 16)); margin: 0 auto; }
+.video-wrap.portrait #stream {
+  position: absolute; top: 50%; left: 50%; aspect-ratio: auto;
+  width: var(--wrap-h); height: var(--wrap-w);
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+#modal-img.portrait { transform: rotate(90deg); max-width: 90vh; max-height: 90vw; }
 #rec-overlay {
   position: absolute; top: 10px; left: 10px;
   display: flex; align-items: center; gap: 6px;
@@ -142,6 +150,7 @@ button:disabled { opacity: 0.45; cursor: default; }
   border-radius: 4px; padding: 1px 6px; font-size: 11px;
 }
 .gthumb { position: relative; }
+.gitem img.tall { object-fit: contain; background: #000; }
 .gitem.processing img { opacity: 0.45; cursor: default; }
 
 /* motion */
@@ -229,6 +238,7 @@ label.check input { width: auto; accent-color: var(--series-1); }
   }
   .video-card { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; min-height: 0; }
   .video-wrap { flex: 1; min-height: 0; }
+  .video-wrap.portrait { aspect-ratio: auto; width: 100%; margin: 0; }
   #stream { height: 100%; aspect-ratio: auto; }
   .video-card .controls { padding: 8px 14px; }
 

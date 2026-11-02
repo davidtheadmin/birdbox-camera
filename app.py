@@ -19,7 +19,7 @@ from flask import (Flask, Response, jsonify, render_template, request,
 
 from audio import AudioManager
 
-from camera import CameraManager
+from camera import CameraManager, rotate_jpeg
 from cleanup import CleanupManager
 from config import Config
 from hardware import create_hardware
@@ -261,6 +261,9 @@ def thumb(name):
         frame = camera.mp4_thumbnail(path)
     else:
         frame = CameraManager.first_frame(path)
+        rotate = CameraManager._read_meta(path).get("rotate", 0)
+        if frame is not None and rotate:
+            frame = rotate_jpeg(frame, rotate)
     if frame is None:
         abort(404)
     return Response(frame, mimetype="image/jpeg")
@@ -370,7 +373,7 @@ def config_get():
 def config_set():
     data = request.get_json(silent=True) or {}
     applied, errors = config.update(data)
-    camera_keys = {"flip_h", "flip_v", "fov", "af_mode", "af_range", "lens_position"}
+    camera_keys = {"flip_h", "flip_v", "rotation", "fov", "af_mode", "af_range", "lens_position"}
     if any(k.startswith("stream_") or k in camera_keys for k in applied):
         camera.restart_pipeline()
     if applied.get("auto_mp4"):

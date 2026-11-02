@@ -32,6 +32,20 @@ def is_mock():
     return bool(os.environ.get("BIRDCAM_MOCK")) or shutil.which("rpicam-vid") is None
 
 
+def rotate_jpeg(jpeg, degrees):
+    """Rotate JPEG bytes clockwise by 90/180/270; unchanged if Pillow is missing."""
+    if not degrees:
+        return jpeg
+    try:
+        from PIL import Image
+    except ImportError:
+        return jpeg
+    op = {90: Image.ROTATE_270, 180: Image.ROTATE_180, 270: Image.ROTATE_90}[degrees]
+    out = io.BytesIO()
+    Image.open(io.BytesIO(jpeg)).transpose(op).save(out, "JPEG", quality=90)
+    return out.getvalue()
+
+
 def has_ffmpeg():
     return shutil.which("ffmpeg") is not None
 
@@ -57,6 +71,7 @@ class CameraManager:
         self._rec_started = None
         self._rec_frames = 0
         self._rec_audio = False
+        self._rec_rotate = 0
 
         self.audio = None           # AudioManager, if a mic is attached
 
@@ -140,13 +155,25 @@ class CameraManager:
 
     # --- snapshot / recording ---
 
+    # --- orientation ---
+    # The camera can only flip, so 180° is done there; the remaining 90° for
+    # portrait (rotation 90/270) is applied downstream: CSS in the browser,
+    # Pillow for snapshots/thumbnails, ffmpeg transpose for mp4.
+
+    def _flips(self):
+        rot180 = self.config["rotation"] in (180, 270)
+        return bool(self.config["flip_h"]) ^ rot180, bool(self.config["flip_v"]) ^ rot180
+
+    def soft_rotation(self):
+        return 90 if self.config["rotation"] in (90, 270) else 0
+
     def snapshot(self):
         """Save the latest frame as a still. Returns the filename."""
         frame = self.latest_frame()
         if frame is None:
             raise RuntimeError("no frame available yet")
         name = time.strftime("snap_%Y%m%d_%H%M%S") + ".jpg"
-        (self.captures_dir / name).write_bytes(frame)
+        (self.captures_dir / name).write_bytes(rotate_jpeg(frame, self.soft_rotation()))
         return name
 
     @property
@@ -173,6 +200,7 @@ class CameraManager:
             self._rec_file = open(self._rec_path, "wb")
             self._rec_started = time.time()
             self._rec_frames = 0
+            self._rec_rotate = self.soft_rotation()   # frames are stored unrotated
             # Audio starts in the same lock so both files begin together.
             # (AudioManager never takes this lock, so no deadlock.)
             self._rec_audio = bool(
@@ -194,6 +222,7 @@ class CameraManager:
                 "width": self.config["stream_width"],
                 "height": self.config["stream_height"],
                 "audio": self._rec_audio,
+                "rotate": self._rec_rotate,
             }
             rec_path = self._rec_path
             rec_path.with_suffix(".json").write_text(json.dumps(meta))
@@ -276,7 +305,9 @@ class CameraManager:
         video_in = ["-f", "mjpeg", "-r", str(fps), "-i", str(mjpeg_path)]
         audio_in = ["-i", str(wav_path), "-map", "0:v:0", "-map", "1:a:0",
                     "-c:a", "aac", "-b:a", "96k"]
-        tail = ["-pix_fmt", "yuv420p", "-movflags", "+faststart", "-f", "mp4", str(tmp)]
+        rotate = meta.get("rotate", 0)
+        vf = ["-vf", "transpose=1"] if rotate == 90 else []   # 90° clockwise
+        tail = vf + ["-pix_fmt", "yuv420p", "-movflags", "+faststart", "-f", "mp4", str(tmp)]
         encoders = [
             ["-c:v", "h264_v4l2m2m", "-b:v", "4M"],                 # Pi hardware encoder
             ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"],  # software fallback
@@ -406,9 +437,10 @@ class CameraManager:
         else:
             cmd += ["--mode", "2304:1296:10:P"]
         # Orientation: both flags together == 180° rotation (upside-down mount).
-        if self.config["flip_h"]:
+        hflip, vflip = self._flips()
+        if hflip:
             cmd.append("--hflip")
-        if self.config["flip_v"]:
+        if vflip:
             cmd.append("--vflip")
         # Focus (Camera Module 3 has a motorised lens; ignored by fixed-focus modules).
         if self.config["af_mode"] == "manual":
@@ -486,9 +518,10 @@ class CameraManager:
                        + "  [MOCK CAMERA]", fill=(200, 200, 200))
                 if self.config["fov"] == "zoom":   # same 2/3 centre crop as the real mode
                     img = img.crop((w / 6, h / 6, w * 5 / 6, h * 5 / 6)).resize((w, h))
-                if self.config["flip_h"]:
+                hflip, vflip = self._flips()
+                if hflip:
                     img = img.transpose(Image.FLIP_LEFT_RIGHT)
-                if self.config["flip_v"]:
+                if vflip:
                     img = img.transpose(Image.FLIP_TOP_BOTTOM)
                 out = io.BytesIO()
                 img.save(out, "JPEG", quality=self.config["stream_quality"])

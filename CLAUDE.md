@@ -94,8 +94,18 @@ git-ignored) holds recordings + `.json` sidecars with duration/fps metadata.
   The I2S mic on the pHAT picks up crackle at 17–21 kHz (heard as
   "crickets") and hum below 200 Hz; both are cut. The meter, trigger, .wav
   and live stream all see the filtered signal.
-- **Rotate** (button under the video) toggles `flip_h` and `flip_v` together
-  = 180°. rpicam can't do 90°.
+- **Rotation** (`rotation` 0/90/180/270 clockwise, button under the video
+  cycles it). rpicam can only flip, so `CameraManager._flips()` does the 180°
+  part (XOR with the mirror flags `flip_h`/`flip_v`) and the remaining 90° for
+  portrait is applied downstream: CSS in the browser (`.video-wrap.portrait`),
+  Pillow for snapshots and mjpeg thumbnails, `transpose=1` when converting to
+  mp4. Recordings store frames unrotated and keep `rotate` in the sidecar, so
+  later changes to the setting don't affect old clips.
+- **Audio noise gate** (`audio_denoise`, `SpectralGate` in audio.py) after the
+  band-pass: learns the steady background per frequency (min of smoothed
+  power, rises ~1 dB/s) and turns it down by up to `audio_denoise_db`. On a
+  birdcam2 clip it cut the 6.5–11 kHz pickup tones ~10–12 dB with a test bird
+  call unchanged.
 - **Settings live in a slide-in panel** (⚙ in the header), not in the grid; the
   right column (lights, motion, sound, history) spans the full height.
 - **rpicam flags are start-up only.** Changing flip, focus or stream settings

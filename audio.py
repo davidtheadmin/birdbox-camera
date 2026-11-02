@@ -121,6 +121,73 @@ class BandPass:
         return y[self.TAPS - 1:len(block)].astype(np.float32)
 
 
+class SpectralGate:
+    """Streaming stationary-noise reduction (spectral gating), numpy only.
+
+    Learns the steady background per frequency (tones and hiss that are
+    always there, e.g. board/WiFi pickup that sounds like crickets) and turns
+    it down; anything clearly above it, like a bird call, passes. STFT with
+    1024-sample sqrt-Hann frames, 50 % overlap, so ~21 ms extra latency.
+
+    The noise estimate falls quickly when a bin gets quieter and rises only
+    slowly (~1 dB/s), so a song lasting a few seconds isn't learned as noise.
+    """
+    N = 1024
+    HOP = N // 2
+    WARMUP = 48                # frames (~0.5 s)
+    NOISE_FLOOR = 1.0          # per-bin power floor (~1 LSB), so digital
+                               # silence can't pin the estimate at zero
+
+    def __init__(self, max_reduction_db=20.0, over=8.0):
+        self.floor = 10 ** (-max_reduction_db / 20.0)
+        self.over = over
+        self.key = max_reduction_db
+        self._win = np.sqrt(np.hanning(self.N + 1)[:-1])   # periodic, OLA-exact
+        self._in = np.zeros(self.N - self.HOP)
+        self._ola = np.zeros(self.N - self.HOP)
+        self._noise = None
+        self._gain = None
+        self._frames = 0
+        rise_db_per_frame = 1.0 * self.HOP / RATE          # ~1 dB/s
+        self._rise = 10 ** (rise_db_per_frame / 10)
+
+    def __call__(self, x):
+        buf = np.concatenate([self._in, x.astype(np.float64)])
+        out = []
+        pos = 0
+        while pos + self.N <= len(buf):
+            spec = np.fft.rfft(buf[pos:pos + self.N] * self._win)
+            power = spec.real ** 2 + spec.imag ** 2 + 1e-12
+            if self._noise is None:
+                self._smooth = power.copy()
+                self._noise = power.copy()
+                self._gain = np.ones_like(power)
+            # Track the minimum of the *smoothed* power: raw bin power
+            # fluctuates ~10 dB frame to frame, and its minimum would put the
+            # estimate far below the real noise level.
+            self._smooth = 0.85 * self._smooth + 0.15 * power
+            self._frames += 1
+            if self._frames < self.WARMUP:
+                # first ~0.5 s (also after a restart or silence): follow the
+                # level directly instead of creeping up at 1 dB/s
+                self._noise = self._smooth.copy()
+            else:
+                down = self._smooth < self._noise
+                self._noise[down] = self._smooth[down]
+                self._noise[~down] *= self._rise
+            np.maximum(self._noise, self.NOISE_FLOOR, out=self._noise)
+            g = np.maximum(self.floor, 1.0 - self.over * self._noise / power)
+            g = np.convolve(g, (0.25, 0.5, 0.25), mode="same")  # less "musical" noise
+            self._gain = np.maximum(g, 0.5 * self._gain)          # fast attack, short release
+            frame = np.fft.irfft(spec * self._gain, self.N) * self._win
+            frame[: len(self._ola)] += self._ola
+            out.append(frame[: self.HOP])
+            self._ola = frame[self.HOP:]
+            pos += self.HOP
+        self._in = buf[pos:]
+        return (np.concatenate(out) if out else np.zeros(0)).astype(np.float32)
+
+
 def _to_db(x):
     """Linear level (full scale = 1.0) -> dBFS, floored."""
     return FLOOR_DB if x <= 0 else max(FLOOR_DB, 20 * math.log10(x))
@@ -144,6 +211,7 @@ class AudioManager:
         self._listeners = set()
 
         self._filter = None
+        self._gate = None
         self._rms_db = FLOOR_DB
         self._peak_db = FLOOR_DB
         self._peak_hold = FLOOR_DB
@@ -272,11 +340,23 @@ class AudioManager:
             self._filter = BandPass(RATE, *key)
         return self._filter(x)
 
+    def _denoise(self, x):
+        if not self.config["audio_denoise"]:
+            self._gate = None
+            return x
+        db = self.config["audio_denoise_db"]
+        if self._gate is None or self._gate.key != db:
+            self._gate = SpectralGate(db)
+        return self._gate(x)
+
     def _process(self, raw):
         gain_db = self.config["audio_gain_db"]
         if np is not None:
             x = np.frombuffer(raw, dtype="<i2").astype(np.float32)
             x = self._bandpass(x)
+            x = self._denoise(x)
+            if len(x) == 0:          # the gate is still filling its first frame
+                x = np.zeros(2, dtype=np.float32)
             if gain_db:
                 x *= 10 ** (gain_db / 20.0)
                 np.clip(x, -32768, 32767, out=x)
