@@ -66,7 +66,9 @@ run_checks() {
         bad "camera not found: check the ribbon (contacts face the board on the Pi 3A+)"
     fi
     if [ -d /sys/class/pwm/pwmchip0 ]; then ok "hardware PWM (LEDs)"; else bad "no pwmchip0: pwm-2chan overlay missing, or not rebooted yet"; fi
-    if command -v i2cdetect >/dev/null && i2cdetect -y 1 2>/dev/null | grep -qE '(^| )10( |$)'; then
+    # Read the ALS register the way hardware.py does; i2cdetect's quick-write
+    # probe can miss the VEML7700 even when it works fine.
+    if python3 -c 'from smbus2 import SMBus; b = SMBus(1); b.read_word_data(0x10, 0x04); b.close()' 2>/dev/null; then
         ok "light sensor VEML7700 at 0x10"
     else
         bad "no I2C device at 0x10: check the sensor wiring / Qwiic cable"
