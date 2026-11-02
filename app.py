@@ -39,7 +39,6 @@ camera = CameraManager(config, CAPTURES_DIR)
 audio = AudioManager(config)
 audio.attach_camera(camera)
 camera.audio = audio
-camera.is_dark = lambda: led.get_state()["brightness"] > 0   # IR LEDs on -> night frame rate
 motion = MotionDetector(camera, config)
 cleanup = CleanupManager(config, CAPTURES_DIR, camera)
 

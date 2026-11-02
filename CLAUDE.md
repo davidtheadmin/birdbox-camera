@@ -94,9 +94,8 @@ git-ignored) holds recordings + `.json` sidecars with duration/fps metadata.
   ffprobe and divides by the real length (the .wav, else the arrival clock),
   then stamps every frame with the `setts` bsf (`-framerate` is ignored when
   the SPS has timing). Pre-roll is measured on the arrival clock too; portrait clips get a rotation tag (`-display_rotation -90`
-  where ffmpeg has it, ≥ 6.1; the `rotate` metadata tag on 5.x). Frame rate is `rec_fps` by day
-  and `night_fps` while the IR LEDs are on (switched only between
-  recordings, ring cleared). If Picamera2 is missing or fails at first start,
+  where ffmpeg has it, ≥ 6.1; the `rotate` metadata tag on 5.x). The sensor runs at `rec_fps` day and night (a
+  night mode at 15 fps was tried and removed). If Picamera2 is missing or fails at first start,
   `rpicam` (rpicam-vid MJPEG, the old path) takes over. Settings that need a
   restart (`rec_*`, `preroll_seconds`, stream, fov, rotation, focus) end a
   running recording first.
@@ -271,7 +270,7 @@ save that violates this.
 
 `test_picam.py` (`python3 -m unittest test_picam`) covers the pre-roll ring
 (starts on a keyframe, ≥ pre-roll, no gaps, waits for a keyframe, bounded
-memory, cleared on fps change) and the matching audio pre-roll. The whole
+memory) and the matching audio pre-roll. The whole
 picamera2 path was also run end to end with a fake pipeline feeding real
 x264 1080p30 access units (record with pre-roll → mux → clean decode, A/V
 lengths within 0.05 s, night fps switch, restart mid-recording, fallback);

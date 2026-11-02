@@ -92,7 +92,6 @@ class CameraManager:
         self.backend = "mock" if self.mock else None   # decided when the thread starts
         self._pipe = None           # running picam.PicamPipeline
         self._restart = threading.Event()
-        self.is_dark = lambda: False  # set by app.py: are the IR LEDs on?
 
         self._rec_lock = threading.Lock()
         self._rec_file = None       # .mjpeg file handle (rpicam/mock backends)
@@ -615,13 +614,10 @@ class CameraManager:
         self.backend = "rpicam"
         self._run_real()
 
-    def _target_fps(self):
-        return self.config["night_fps"] if self.is_dark() else self.config["rec_fps"]
 
     def _run_picam(self):
         """Run the Picamera2 pipeline until stop. Restarts it on settings
-        changes and if frames stop arriving; switches the frame rate between
-        day and night between recordings. Returns False if it never started
+        changes and if frames stop arriving. Returns False if it never started
         (the caller falls back to rpicam-vid)."""
         self.backend = "picamera2"
         started_once = False
@@ -629,7 +625,7 @@ class CameraManager:
             self._restart.clear()
             pipe = picam.PicamPipeline(self.config, self._flips, self._publish)
             try:
-                pipe.start(self._target_fps())
+                pipe.start(self.config["rec_fps"])
             except Exception as e:
                 print(f"[camera] Picamera2 start failed: {e!r}")
                 if not started_once:
@@ -642,12 +638,6 @@ class CameraManager:
             since = time.monotonic()
             while not self._stop.is_set() and not self._restart.is_set():
                 self._restart.wait(2.0)
-                want = self._target_fps()
-                if want != pipe.fps and not self.recording:
-                    try:
-                        pipe.set_fps(want)
-                    except Exception as e:
-                        print(f"[camera] frame rate change failed: {e!r}")
                 if time.monotonic() - since > 15 and not pipe.healthy():
                     print("[camera] no frames from Picamera2 for 10 s, restarting it")
                     break

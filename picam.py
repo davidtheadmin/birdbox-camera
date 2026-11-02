@@ -12,8 +12,7 @@ resolution never needs a camera restart:
   LiveOutput, throttled to stream_fps, for the browser, motion detection and
   snapshots.
 
-The sensor runs at rec_fps (30) by day and night_fps (15) when the IR LEDs
-are on, because at 30 fps each frame can only be exposed for 1/30 s.
+The sensor runs at rec_fps (30) all the time, day and night.
 
 Picamera2 is imported lazily, so this module also imports (and RecordBuffer
 can be tested) on a machine without it.
@@ -257,12 +256,6 @@ class PicamPipeline:
         print(f"[picam] running: record {main[0]}x{main[1]} H.264 @ {fps} fps, "
               f"live {lores[0]}x{lores[1]} MJPEG @ {cfg['stream_fps']} fps, "
               f"pre-roll {cfg['preroll_seconds']} s")
-
-    def set_fps(self, fps):
-        self._cam.set_controls({"FrameDurationLimits": self._frame_duration(fps)})
-        self.rec.clear()
-        self.fps = fps
-        print(f"[picam] frame rate -> {fps} fps")
 
     def healthy(self, timeout=10.0):
         now = time.monotonic()                 # rec.clock is time.monotonic here

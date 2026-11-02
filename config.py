@@ -42,7 +42,6 @@ DEFAULTS = {
     "camera_backend": "auto",  # auto (picamera2 if installed) | picamera2 | rpicam
     "rec_size": "1920x1080",
     "rec_fps": 30,
-    "night_fps": 15,          # when the IR LEDs are on: longer exposure per frame
     "rec_bitrate": 8.0,       # Mbit/s
     "preroll_seconds": 3.0,   # recordings start this long before the trigger
 
@@ -98,7 +97,6 @@ EDITABLE = {
     "auto_mp4": (int, 0, 1),
     "rec_size": (str, ["1920x1080", "1280x720"]),
     "rec_fps": (int, 5, 30),
-    "night_fps": (int, 5, 30),
     "rec_bitrate": (float, 1.0, 20.0),
     "preroll_seconds": (float, 0.0, 10.0),
     "motion_enabled": (int, 0, 1),

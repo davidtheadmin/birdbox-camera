@@ -82,17 +82,6 @@ class RecordBufferTest(unittest.TestCase):
         self.assertEqual(frames_in(self.path), [30, 31])
         self.assertEqual(stats["frames"], 2)
 
-    def test_clear_after_fps_change_drops_old_rate_frames(self):
-        rb = buffer(3.0)
-        feed(rb, 0, 90, fps=30)
-        rb.clear()
-        feed(rb, 0, 45, fps=15, gop=15)       # night: 15 fps
-        pre = rb.start_file(self.path)
-        feed(rb, 45, 30, fps=15, gop=15)
-        stats = rb.stop_file()
-        self.assertAlmostEqual(stats["fps"], 15, places=1)
-        self.assertGreaterEqual(pre, 2.9)
-
     def test_wrong_encoder_timestamps_dont_change_preroll(self):
         rb = buffer(3.0)
         feed(rb, 0, 180, ts_scale=0.5)        # timestamps claim 60 fps
