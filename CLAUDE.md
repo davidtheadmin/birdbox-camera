@@ -78,6 +78,15 @@ git-ignored) holds recordings + `.json` sidecars with duration/fps metadata.
   remove it with its recording; `convert_to_mp4` muxes it in (AAC) and deletes
   it only if the mux succeeded. Sound auto-record (`sound_trigger`) reuses
   `motion_cooldown` and, like motion, only stops recordings it started.
+- **Recordings become mp4 automatically** (`auto_mp4`, default on). Each
+  finished `.mjpeg` goes into a single-worker queue in `CameraManager`
+  (`nice -n 19` ffmpeg, hardware `h264_v4l2m2m` first, `.wav` muxed as AAC);
+  `.mjpeg` left over at start-up is queued too. A failed conversion marks the
+  sidecar `mp4_failed` and is skipped at later start-ups ("mp4" in the gallery
+  still forces it). Queued names count as `transcoding_names()`, so cleanup
+  leaves them alone.
+- **Settings live in a slide-in panel** (⚙ in the header), not in the grid; the
+  right column (lights, motion, sound, history) spans the full height.
 - **rpicam flags are start-up only.** Changing flip, focus or stream settings
   calls `camera.restart_pipeline()`. The relevant keys are listed in
   `config_set()` in `app.py`; add new camera flags there too.
@@ -175,8 +184,8 @@ is still used for exactly one thing: the PC script's "was this touched in
 the last 5 minutes" quiet-period check, where the actual mtime is the right
 signal. The reason: manually converting a `.mjpeg` to `.mp4` (see
 `camera.py`'s `convert_to_mp4`) rewrites the file's mtime to the conversion
-time. Since conversion is now a manual, on-demand action rather than
-immediate-after-recording, that drift can be large — an old, already-
+time. Conversion can also run long after recording (a queued backlog, or a
+manual "mp4" on an old clip), so that drift can be large — an old, already-
 archived recording converted today would look newer than everything else
 by mtime, corrupting both the deletion order and the marker comparison.
 Confirmed live against real Pi data: a same-day recording converted earlier

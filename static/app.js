@@ -516,8 +516,11 @@ graphsBox.addEventListener("dblclick", () => changeView(viewSpan, Date.now() / 1
 // ---------- gallery ----------
 
 function fmtDate(ts) {
+  // today: just the time; otherwise a short date in front, so the tile stays one line
   const d = new Date(ts * 1000);
-  return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (d.toDateString() === new Date().toDateString()) return time;
+  return d.toLocaleDateString([], { day: "numeric", month: "short" }) + " " + time;
 }
 
 async function loadGallery() {
@@ -552,16 +555,16 @@ async function loadGallery() {
         : item.type === "mjpeg" ? '<span class="badge-video">▶ mjpeg</span>'
         : "";
       const convertBtn = item.type === "mjpeg" && !item.processing
-        ? '<button class="convert">to mp4</button>' : "";
+        ? '<button class="convert" title="Convert to mp4">mp4</button>' : "";
       div.innerHTML =
         `<div class="gthumb"><img loading="lazy" src="/thumb/${encodeURIComponent(item.name)}" alt="${item.name}">` +
         badge + `</div>` +
-        `<div class="gmeta">${fmtDate(item.mtime)}<span class="muted">${fmtBytes(item.size)}${dur}${snd}</span></div>` +
+        `<div class="gmeta" title="${item.name}">${fmtDate(item.taken || item.mtime)}<span class="muted"> · ${fmtBytes(item.size)}${dur}${snd}</span></div>` +
         `<div class="gactions">` +
-        `<a href="/media/${encodeURIComponent(item.name)}?download=1">download</a>` +
-        (item.audio_file ? `<a href="/media/${encodeURIComponent(item.audio_file)}?download=1">wav</a>` : "") +
+        `<a href="/media/${encodeURIComponent(item.name)}?download=1" title="Download">&#11015; ${item.type === "image" ? "jpg" : item.type}</a>` +
+        (item.audio_file ? `<a href="/media/${encodeURIComponent(item.audio_file)}?download=1" title="Download sound">&#11015; wav</a>` : "") +
         convertBtn +
-        `<button class="danger">delete</button></div>`;
+        `<button class="danger" title="Delete">&#10005;</button></div>`;
       if (item.processing) div.classList.add("processing");
       else div.querySelector("img").onclick = () => openModal(item);
       const cb = div.querySelector(".convert");
@@ -629,12 +632,26 @@ $("modal").onclick = () => {
   vid.pause?.(); vid.removeAttribute("src"); vid.load?.();
 };
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape") $("modal").onclick();
+  if (e.key === "Escape") { $("modal").onclick(); closeSettings(); }
 });
 
 // ---------- settings ----------
 
 const settingsForm = $("settings-form");
+
+function openSettings() {
+  loadSettings();
+  document.body.classList.add("settings-open");
+  $("settings-backdrop").classList.remove("hidden");
+}
+function closeSettings() {
+  document.body.classList.remove("settings-open");
+  $("settings-backdrop").classList.add("hidden");
+}
+$("btn-settings").onclick = () =>
+  document.body.classList.contains("settings-open") ? closeSettings() : openSettings();
+$("btn-settings-close").onclick = closeSettings;
+$("settings-backdrop").onclick = closeSettings;
 
 async function loadSettings() {
   try {

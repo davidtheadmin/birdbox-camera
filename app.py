@@ -197,6 +197,17 @@ def _safe_media_path(name):
     return path
 
 
+def _taken_at(path):
+    """When a capture was taken, from its rec_/snap_YYYYmmdd_HHMMSS name (the
+    Pi's local time). Converting to mp4 rewrites mtime, so mtime would put old
+    clips at the top with today's date."""
+    try:
+        stamp = path.stem.split("_", 1)[1]
+        return time.mktime(time.strptime(stamp, "%Y%m%d_%H%M%S"))
+    except (IndexError, ValueError):
+        return path.stat().st_mtime
+
+
 @app.route("/api/gallery")
 def gallery():
     kinds = {".mp4": "mp4", ".mjpeg": "mjpeg"}
@@ -211,6 +222,7 @@ def gallery():
             "type": kind,
             "size": path.stat().st_size,
             "mtime": path.stat().st_mtime,
+            "taken": _taken_at(path),
         }
         if kind != "image":
             sidecar = path.with_suffix(".json")
@@ -224,7 +236,7 @@ def gallery():
         if path.name in transcoding:
             item["processing"] = True
         items.append(item)
-    items.sort(key=lambda i: i["mtime"], reverse=True)
+    items.sort(key=lambda i: i["taken"], reverse=True)
     return jsonify({"items": items,
                     "disk": system_status.disk_usage(CAPTURES_DIR),
                     "cleanup": cleanup.state()})
@@ -361,6 +373,8 @@ def config_set():
     camera_keys = {"flip_h", "flip_v", "af_mode", "af_range", "lens_position"}
     if any(k.startswith("stream_") or k in camera_keys for k in applied):
         camera.restart_pipeline()
+    if applied.get("auto_mp4"):
+        camera._queue_backlog()      # convert clips recorded while it was off
     status_code = 200 if not errors else 400
     return jsonify({"applied": applied, "errors": errors,
                     "config": config.as_dict()}), status_code

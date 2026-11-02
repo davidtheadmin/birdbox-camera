@@ -69,7 +69,8 @@ Mock mode also kicks in automatically when the PWM chip, `smbus2` or
 
 Captures land in `captures/` (gitignored). Recordings are raw `.mjpeg`
 (concatenated JPEG frames) with a `.json` sidecar and, with the mic, a `.wav`
-of the same name ("to mp4" muxes it in as AAC and removes the `.wav`); the gallery plays them
+of the same name. By default each one is converted to `.mp4` (H.264 + AAC)
+in the background right after it stops, so downloads play anywhere; the gallery plays them
 back by re-streaming, VLC plays the files directly, and
 `ffmpeg -framerate <fps> -i rec.mjpeg -c copy rec.avi` remuxes if needed.
 

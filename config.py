@@ -31,6 +31,9 @@ DEFAULTS = {
     "af_range": "macro",      # normal | macro | full  (macro helps a close nest focus)
     "lens_position": 4.0,     # manual focus in dioptres (1/metres); 0 = infinity, 4 ≈ 0.25 m
 
+    # --- recordings ---
+    "auto_mp4": 1,            # convert every finished recording to mp4 (H.264 + AAC)
+
     # --- motion detection ---
     "motion_enabled": 0,      # arm auto-record on motion
     "motion_sensitivity": 50,  # 1 (least) .. 100 (most) sensitive
@@ -73,6 +76,7 @@ EDITABLE = {
     "af_mode": (str, ["continuous", "manual"]),
     "af_range": (str, ["normal", "macro", "full"]),
     "lens_position": (float, 0.0, 10.0),
+    "auto_mp4": (int, 0, 1),
     "motion_enabled": (int, 0, 1),
     "motion_sensitivity": (int, 1, 100),
     "motion_interval": (float, 0.2, 10.0),

@@ -20,6 +20,7 @@
     <span class="chip mock-chip hidden" id="chip-mock" title="Hardware/camera simulated">MOCK</span>
   </div>
   <div id="syscontrols">
+    <button id="btn-settings" class="sysbtn" title="Settings">&#9881;</button>
     <button id="btn-reboot" class="sysbtn" title="Restart the Pi">&#8635;</button>
     <button id="btn-shutdown" class="sysbtn danger" title="Shut down the Pi">&#9211;</button>
   </div>
@@ -95,13 +96,11 @@
       </div>
       <div class="motion-stats">
         <span id="sound-status" class="muted">–</span>
-        <button id="btn-listen" class="small-btn">&#128264; Listen</button>
-      </div>
-      <div class="motion-stats">
-        <label class="motion-sens">trigger level
+        <label class="motion-sens" title="Trigger level">trigger
           <input type="range" id="sound-threshold" min="-90" max="0" step="1" value="-40">
+          <span id="sound-threshold-val">–</span>
         </label>
-        <span id="sound-threshold-val" class="muted">–</span>
+        <button id="btn-listen" class="small-btn">&#128264; Listen</button>
       </div>
       <audio id="live-audio" preload="none"></audio>
     </section>
@@ -149,8 +148,12 @@
   </section>
 
   <!-- settings -->
-  <details class="card wide settings-card" id="settings" open>
-    <summary><h2>Settings</h2></summary>
+  <div id="settings-backdrop" class="hidden"></div>
+  <section class="card settings-card" id="settings" aria-label="Settings">
+    <div class="graph-head">
+      <h2>Settings</h2>
+      <button id="btn-settings-close" class="sysbtn" title="Close">&#10005;</button>
+    </div>
     <form id="settings-form">
       <fieldset>
         <legend>LED / sensor</legend>
@@ -189,6 +192,11 @@
         </label>
       </fieldset>
       <fieldset>
+        <legend>Recordings</legend>
+        <label class="check" style="grid-column: 1 / -1"><input name="auto_mp4" type="checkbox"> Convert to mp4 after recording</label>
+        <span class="muted flip-hint">Plays anywhere, sound included. Runs in the background at low priority.</span>
+      </fieldset>
+      <fieldset>
         <legend>Motion</legend>
         <label>Motion sample interval (s) <input name="motion_interval" type="number" step="0.1" min="0.2" max="10"></label>
         <label>Motion cooldown (s) <input name="motion_cooldown" type="number" step="0.5" min="1" max="120"></label>
@@ -215,7 +223,7 @@
         <span id="settings-msg" class="muted"></span>
       </div>
     </form>
-  </details>
+  </section>
 </main>
 
 <!-- media viewer modal -->

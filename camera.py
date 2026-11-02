@@ -15,6 +15,7 @@ Pillow so the whole UI works on the dev laptop.
 """
 import io
 import json
+import queue
 import math
 import os
 import shutil
@@ -59,8 +60,13 @@ class CameraManager:
 
         self.audio = None           # AudioManager, if a mic is attached
 
-        self._transcoding = set()   # .mjpeg names currently being converted to .mp4
+        self._transcoding = set()   # .mjpeg names queued for or being converted to .mp4
         self._transcode_lock = threading.Lock()
+        # One conversion at a time: the Pi 3A+ has 512 MB and a single hardware
+        # encoder, and the live stream must keep its CPU.
+        self._transcode_q = queue.Queue()
+        self._transcode_thread = threading.Thread(
+            target=self._transcode_loop, name="transcode", daemon=True)
 
         self._thread = threading.Thread(target=self._run, name="camera", daemon=True)
 
@@ -68,6 +74,9 @@ class CameraManager:
 
     def start(self):
         self._thread.start()
+        self._transcode_thread.start()
+        if self.config["auto_mp4"]:
+            self._queue_backlog()
 
     def stop(self):
         self._stop.set()
@@ -191,19 +200,44 @@ class CameraManager:
             name = rec_path.name
             self._rec_file = None
             self._rec_path = None
-        # Recordings are kept as raw .mjpeg; converting to mp4 is a separate,
-        # user-triggered action (see convert_to_mp4) since transcoding every
-        # clip is expensive on a Zero 2 W and most clips are never viewed.
+        # With auto_mp4 on, every finished clip is queued for conversion so the
+        # gallery serves files that play anywhere. Otherwise it stays .mjpeg
+        # until "to mp4" is pressed.
+        if self.config["auto_mp4"] and not self._stop.is_set():
+            try:
+                self.convert_to_mp4(name)
+            except (RuntimeError, FileNotFoundError) as e:
+                print(f"[camera] not converting {name}: {e}")
         return name, meta
 
-    # --- mp4 transcode (background, user-triggered) ---
+    # --- mp4 transcode (background queue, one at a time) ---
 
     def transcoding_names(self):
         with self._transcode_lock:
             return set(self._transcoding)
 
+    def _queue_backlog(self):
+        """Queue .mjpeg recordings left over from before auto_mp4 (or from a
+        crash mid-conversion), oldest first, skipping ones that failed before."""
+        for path in sorted(self.captures_dir.glob("rec_*.mjpeg")):
+            meta = self._read_meta(path)
+            if meta.get("mp4_failed"):
+                continue
+            try:
+                self.convert_to_mp4(path.name)
+            except (RuntimeError, FileNotFoundError):
+                pass
+
+    @staticmethod
+    def _read_meta(path):
+        sidecar = Path(path).with_suffix(".json")
+        try:
+            return json.loads(sidecar.read_text())
+        except (ValueError, OSError):
+            return {}
+
     def convert_to_mp4(self, name):
-        """Kick off a background mp4 transcode of an existing .mjpeg recording."""
+        """Queue a background mp4 transcode of an existing .mjpeg recording."""
         path = self.captures_dir / name
         if path.suffix != ".mjpeg" or not path.is_file():
             raise FileNotFoundError(name)
@@ -213,15 +247,22 @@ class CameraManager:
             if path.name in self._transcoding:
                 raise RuntimeError("already converting")
             self._transcoding.add(path.name)
-        sidecar = path.with_suffix(".json")
-        meta = {}
-        if sidecar.exists():
+        self._transcode_q.put(path)
+
+    def _transcode_loop(self):
+        while not self._stop.is_set():
             try:
-                meta = json.loads(sidecar.read_text())
-            except (ValueError, OSError):
-                pass
-        threading.Thread(target=self._transcode_worker, args=(path, meta),
-                         name="transcode", daemon=True).start()
+                path = self._transcode_q.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            try:
+                if path.is_file():
+                    self._transcode_worker(path, self._read_meta(path))
+            except Exception as e:          # never let one bad file stop the queue
+                print(f"[camera] transcode of {path.name} crashed: {e}")
+            finally:
+                with self._transcode_lock:
+                    self._transcoding.discard(path.name)
 
     def _transcode_worker(self, mjpeg_path, meta):
         """mjpeg (+ wav) -> H.264/AAC mp4. Tries the Pi hardware encoder, falls
@@ -246,7 +287,8 @@ class CameraManager:
         attempts += [(enc, False) for enc in encoders]
         ok = muxed_audio = False
         for enc, with_audio in attempts:
-            cmd = (["ffmpeg", "-y", "-loglevel", "error"] + video_in
+            nice = ["nice", "-n", "19"] if shutil.which("nice") else []  # not on Windows
+            cmd = (nice + ["ffmpeg", "-y", "-loglevel", "error"] + video_in
                    + (audio_in if with_audio else []) + enc + tail)
             try:
                 r = subprocess.run(cmd,
@@ -274,8 +316,10 @@ class CameraManager:
             if tmp.exists():
                 tmp.unlink()
             print(f"[camera] mp4 transcode failed for {mjpeg_path.name}; kept mjpeg")
-        with self._transcode_lock:
-            self._transcoding.discard(mjpeg_path.name)
+            try:   # don't retry it on every start; "to mp4" can still force it
+                mjpeg_path.with_suffix(".json").write_text(json.dumps(dict(meta, mp4_failed=True)))
+            except OSError:
+                pass
 
     # --- replay of saved .mjpeg recordings ---
 
