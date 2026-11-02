@@ -653,6 +653,17 @@ document.querySelectorAll("#fov-toggle button").forEach(btn => {
 });
 api("/api/config").then(c => updateFov(c.fov)).catch(() => {});
 
+// Rotate 180° = flip both axes. Toggling both also composes correctly with a
+// mirror-only setting.
+$("btn-rotate").onclick = async () => {
+  try {
+    const c = await api("/api/config");
+    await api("/api/config", "POST", { flip_h: c.flip_h ? 0 : 1, flip_v: c.flip_v ? 0 : 1 });
+    toast("Rotated 180° — camera restarting…");
+    loadSettings();
+  } catch (e) { toast("Error: " + e.message); }
+};
+
 // ---------- settings ----------
 
 const settingsForm = $("settings-form");

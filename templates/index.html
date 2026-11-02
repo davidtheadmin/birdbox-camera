@@ -36,7 +36,8 @@
     <div class="controls">
       <button id="btn-snapshot">&#128247; Snapshot</button>
       <button id="btn-record">&#9210; Record</button>
-      <div class="segmented small fov-toggle" id="fov-toggle" title="Field of view">
+      <button id="btn-rotate" class="small-btn rotate-btn" title="Rotate the image 180°">&#10227; Rotate</button>
+      <div class="segmented small" id="fov-toggle" title="Field of view">
         <button data-fov="wide">Wide</button>
         <button data-fov="zoom">Zoom</button>
       </div>
@@ -211,6 +212,9 @@
         <label class="check"><input name="audio_record" type="checkbox"> Record sound with video</label>
         <label>Gain (dB) <span class="muted">(raise if the meter barely moves)</span>
           <input name="audio_gain_db" type="number" step="1" min="0" max="40"></label>
+        <label class="check"><input name="audio_filter" type="checkbox"> Filter hum and crackle</label>
+        <label>Filter: cut below (Hz) <input name="audio_low_hz" type="number" step="10" min="20" max="2000"></label>
+        <label>Filter: cut above (Hz) <input name="audio_high_hz" type="number" step="100" min="2000" max="23000"></label>
         <label>Sound trigger level (dBFS) <input name="sound_threshold_db" type="number" step="1" min="-90" max="0"></label>
         <span class="muted flip-hint">Sound auto-record stops after the motion cooldown of quiet.</span>
       </fieldset>

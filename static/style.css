@@ -79,7 +79,7 @@ main {
 }
 @keyframes blink { 50% { opacity: 0.25; } }
 .video-card .controls { padding: 12px 14px; }
-.fov-toggle { margin-left: auto; }
+.rotate-btn { margin-left: auto; }
 
 .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 button {

@@ -89,6 +89,13 @@ git-ignored) holds recordings + `.json` sidecars with duration/fps metadata.
   video): `wide` passes `--mode 2304:1296:10:P` (whole IMX708 sensor),
   `zoom` passes `--mode 1536:864:10:P` (2/3 centre crop). Without `--mode`,
   libcamera picks the cropped mode for a 720p stream.
+- **Audio is band-pass filtered before gain** (`audio_filter`, default
+  200 Hz–12 kHz, `BandPass` in audio.py: numpy FFT overlap-save, 2049 taps).
+  The I2S mic on the pHAT picks up crackle at 17–21 kHz (heard as
+  "crickets") and hum below 200 Hz; both are cut. The meter, trigger, .wav
+  and live stream all see the filtered signal.
+- **Rotate** (button under the video) toggles `flip_h` and `flip_v` together
+  = 180°. rpicam can't do 90°.
 - **Settings live in a slide-in panel** (⚙ in the header), not in the grid; the
   right column (lights, motion, sound, history) spans the full height.
 - **rpicam flags are start-up only.** Changing flip, focus or stream settings

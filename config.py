@@ -46,6 +46,9 @@ DEFAULTS = {
     "audio_enabled": 1,        # run the mic at all
     "audio_record": 1,         # write a .wav alongside every video recording
     "audio_gain_db": 20.0,     # digital gain; MEMS mics are quiet at bird distances
+    "audio_filter": 1,         # band-pass: drop rumble and high-frequency crackle
+    "audio_low_hz": 200.0,     # below this is cut (hum, wind, handling)
+    "audio_high_hz": 12000.0,  # above this is cut (board/WiFi pickup)
     "audio_device": "auto",    # ALSA device, or "auto" to find the I2S card
     "sound_trigger": 0,        # start a recording when it gets loud
     "sound_threshold_db": -40.0,  # RMS level (dBFS, after gain) that counts as loud
@@ -87,6 +90,9 @@ EDITABLE = {
     "audio_enabled": (int, 0, 1),
     "audio_record": (int, 0, 1),
     "audio_gain_db": (float, 0.0, 40.0),
+    "audio_filter": (int, 0, 1),
+    "audio_low_hz": (float, 20.0, 2000.0),
+    "audio_high_hz": (float, 2000.0, 23000.0),
     "sound_trigger": (int, 0, 1),
     "sound_threshold_db": (float, -90.0, 0.0),
     "cleanup_enabled": (int, 0, 1),
