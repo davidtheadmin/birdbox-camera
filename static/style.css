@@ -233,7 +233,7 @@ label.check input { width: auto; accent-color: var(--series-1); }
   body { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; padding-bottom: 16px; }
   main {
     flex: 1; min-height: 0; width: 100%; max-width: none;
-    grid-template-rows: minmax(0, 1fr) 210px;
+    grid-template-rows: minmax(0, 1fr) auto;   /* gallery row: tiles + scrollbar */
     align-items: stretch;
   }
   .video-card { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; min-height: 0; }
@@ -252,7 +252,7 @@ label.check input { width: auto; accent-color: var(--series-1); }
   /* gallery: one horizontally scrolling row under the video */
   .gallery-card { grid-column: 1; grid-row: 2; display: flex; flex-direction: column; min-height: 0; }
   .gallery-card .gallery-grid {
-    flex: 1; min-height: 0; margin-top: 6px;
+    margin-top: 6px; padding-bottom: 4px; scrollbar-width: thin;
     grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 170px;
     overflow-x: auto; overflow-y: hidden; align-items: start;
   }
