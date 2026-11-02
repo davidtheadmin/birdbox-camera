@@ -21,6 +21,7 @@ The manual steps it automates:
 
 ```sh
 sudo apt install -y git python3-flask python3-smbus2 python3-pil python3-numpy ffmpeg i2c-tools alsa-utils
+sudo apt install -y --no-install-recommends python3-picamera2
 sudo raspi-config nonint do_i2c 0
 echo 'dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4' | sudo tee -a /boot/firmware/config.txt
 printf 'dtparam=i2s=on\ndtoverlay=googlevoicehat-soundcard\n' | sudo tee -a /boot/firmware/config.txt  # I2S mic
@@ -62,7 +63,8 @@ Mock mode also kicks in automatically when the PWM chip, `smbus2` or
 | `app.py` | Flask app + API routes, the single entrypoint |
 | `hardware.py` | Birdbox pHAT: IR LED current via hardware PWM0 (GPIO12), VEML7700 light sensor in lux (I2C 0x10) + mock |
 | `ledcontrol.py` | background sensor→LED loop (absorbed from `birdcam_lights.py`), auto/manual, history |
-| `camera.py` | single rpicam-vid MJPEG pipeline: live stream, snapshots, recordings + mock camera |
+| `camera.py` | camera manager: live stream, snapshots, recordings, mp4 conversion; picks the Picamera2 pipeline, the rpicam-vid fallback or the mock camera |
+| `picam.py` | Picamera2 pipeline: 1080p30 hardware H.264 recordings with pre-roll from the main stream, live view from the small stream |
 | `audio.py` | single arecord pipeline for the I2S mic: level meter, `.wav` alongside each recording, live listen (`/audio/live`), sound trigger + mock |
 | `status.py` | uptime / CPU temp / wifi / disk from /proc and /sys |
 | `config.py` | defaults + `config.json` persistence, edited from the settings UI |

@@ -37,6 +37,14 @@ DEFAULTS = {
 
     # --- recordings ---
     "auto_mp4": 1,            # convert every finished recording to mp4 (H.264 + AAC)
+    # picamera2 backend: recordings come from a second, bigger stream with
+    # the hardware H.264 encoder, independent of the live view above
+    "camera_backend": "auto",  # auto (picamera2 if installed) | picamera2 | rpicam
+    "rec_size": "1920x1080",
+    "rec_fps": 30,
+    "night_fps": 15,          # when the IR LEDs are on: longer exposure per frame
+    "rec_bitrate": 8.0,       # Mbit/s
+    "preroll_seconds": 3.0,   # recordings start this long before the trigger
 
     # --- motion detection ---
     "motion_enabled": 0,      # arm auto-record on motion
@@ -88,6 +96,11 @@ EDITABLE = {
     "af_range": (str, ["normal", "macro", "full"]),
     "lens_position": (float, 0.0, 10.0),
     "auto_mp4": (int, 0, 1),
+    "rec_size": (str, ["1920x1080", "1280x720"]),
+    "rec_fps": (int, 5, 30),
+    "night_fps": (int, 5, 30),
+    "rec_bitrate": (float, 1.0, 20.0),
+    "preroll_seconds": (float, 0.0, 10.0),
     "motion_enabled": (int, 0, 1),
     "motion_sensitivity": (int, 1, 100),
     "motion_interval": (float, 0.2, 10.0),

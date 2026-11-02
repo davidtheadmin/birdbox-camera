@@ -25,6 +25,7 @@ Mock mode (BIRDCAM_MOCK=1, or no arecord) synthesises background noise
 with occasional chirps so the whole UI works on the laptop.
 """
 import array
+import collections
 import math
 import os
 import queue
@@ -209,6 +210,10 @@ class AudioManager:
         self._wav = None
         self._wav_path = None
         self._listeners = set()
+        # Recent processed audio, so a recording can start with the same
+        # pre-roll as the video (picamera2 backend). Chunks of ~100 ms.
+        self._recent = collections.deque()
+        self._recent_bytes = 0
 
         self._filter = None
         self._gate = None
@@ -278,9 +283,10 @@ class AudioManager:
 
     # --- recording (called by CameraManager) ---
 
-    def start_recording(self, wav_path):
-        """Start writing a .wav next to a new video recording. Returns True
-        if audio is being recorded."""
+    def start_recording(self, wav_path, preroll=0.0):
+        """Start writing a .wav next to a new video recording, beginning
+        `preroll` seconds in the past to match the video. Returns True if
+        audio is being recorded."""
         if not (self.config["audio_enabled"] and self.config["audio_record"]):
             return False
         if time.time() - self._last_chunk > 1.0:
@@ -296,6 +302,12 @@ class AudioManager:
         with self._lock:
             if self._wav:
                 self._wav.close()
+            if preroll > 0 and self._recent:
+                want = int(preroll * RATE) * 2
+                past = b"".join(self._recent)[-want:]
+                if len(past) < want:   # mic started after the video buffer: pad
+                    past = b"\x00" * (want - len(past)) + past
+                w.writeframesraw(past)
             self._wav, self._wav_path = w, wav_path
         return True
 
@@ -390,6 +402,11 @@ class AudioManager:
             self._peak_hold, self._peak_hold_t = self._peak_db, now
 
         with self._lock:
+            self._recent.append(data)
+            self._recent_bytes += len(data)
+            keep = int((self.config["preroll_seconds"] + 1.5) * RATE) * 2
+            while self._recent and self._recent_bytes - len(self._recent[0]) >= keep:
+                self._recent_bytes -= len(self._recent.popleft())
             if self._wav:
                 try:
                     self._wav.writeframesraw(data)

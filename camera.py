@@ -1,14 +1,18 @@
-"""Camera pipeline: one rpicam-vid MJPEG process feeds everything.
+"""Camera pipeline. Three backends, chosen at start-up:
 
-A reader thread splits the JPEG stream into frames and publishes the
-latest one; live viewers, snapshots and recordings all consume from that
-single pipeline, so the live view never pauses and only one process ever
-touches the camera.
+- picamera2 (pHAT units, default when available; see picam.py): the sensor
+  delivers two streams at once. Recordings come from the main stream as
+  hardware H.264 at rec_size/rec_fps (1080p30) with a few seconds of
+  pre-roll; the live view, motion and snapshots use the small stream.
+  Recordings are written as raw .h264 and muxed (no re-encode) to .mp4 with
+  their .wav right after they stop.
+- rpicam (fallback if Picamera2 is missing or fails to start): one
+  rpicam-vid MJPEG process feeds everything, and recordings are the live
+  stream saved as raw concatenated JPEGs (.mjpeg), converted to mp4 after.
+- mock: synthetic frames for the dev laptop.
 
-Recordings are stored as raw concatenated JPEG frames (.mjpeg) plus a
-small .json sidecar with fps/duration; the app replays them as an MJPEG
-stream so they play in the browser without ffmpeg. VLC also plays the
-raw files directly.
+In all cases the latest live JPEG is published to viewers, snapshots and
+motion detection from one place, and only this process touches the camera.
 
 Mock mode (no rpicam-vid / BIRDCAM_MOCK=1) synthesizes frames with
 Pillow so the whole UI works on the dev laptop.
@@ -23,6 +27,8 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+
+import picam
 
 JPEG_SOI = b"\xff\xd8"
 JPEG_EOI = b"\xff\xd9"
@@ -50,6 +56,24 @@ def has_ffmpeg():
     return shutil.which("ffmpeg") is not None
 
 
+_ffmpeg_display_rotation = None
+
+
+def ffmpeg_has_display_rotation():
+    """True if ffmpeg can tag a stream as rotated without re-encoding via
+    -display_rotation (ffmpeg >= 6.1). Older versions (Bookworm's 5.1) use
+    the 'rotate' metadata tag instead, which 6.x dropped."""
+    global _ffmpeg_display_rotation
+    if _ffmpeg_display_rotation is None:
+        try:
+            out = subprocess.run(["ffmpeg", "-hide_banner", "-h", "full"],
+                                 capture_output=True, text=True, timeout=20).stdout
+            _ffmpeg_display_rotation = "-display_rotation" in out
+        except (OSError, subprocess.TimeoutExpired):
+            _ffmpeg_display_rotation = False
+    return _ffmpeg_display_rotation
+
+
 class CameraManager:
     """Owns the camera process, the latest frame, and recording state."""
 
@@ -65,8 +89,15 @@ class CameraManager:
         self._stop = threading.Event()
         self._proc = None
 
+        self.backend = "mock" if self.mock else None   # decided when the thread starts
+        self._pipe = None           # running picam.PicamPipeline
+        self._restart = threading.Event()
+        self.is_dark = lambda: False  # set by app.py: are the IR LEDs on?
+
         self._rec_lock = threading.Lock()
-        self._rec_file = None       # open file handle while recording
+        self._rec_file = None       # .mjpeg file handle (rpicam/mock backends)
+        self._rec_out = None        # picam.RecordBuffer writing the .h264 (picamera2)
+        self._rec_preroll = 0.0
         self._rec_path = None
         self._rec_started = None
         self._rec_frames = 0
@@ -90,21 +121,33 @@ class CameraManager:
     def start(self):
         self._thread.start()
         self._transcode_thread.start()
-        if self.config["auto_mp4"]:
-            self._queue_backlog()
+        self._queue_backlog(include_mjpeg=bool(self.config["auto_mp4"]))
 
     def stop(self):
         self._stop.set()
+        self._restart.set()
         self._kill_proc()
         if self.recording:
             self.stop_recording()
         self._thread.join(timeout=5)
 
     def restart_pipeline(self):
-        """Apply new stream settings: kill rpicam-vid; the camera thread
-        restarts it with the current config. No-op state-wise in mock mode
-        (the mock loop reads config every frame)."""
-        self._kill_proc()
+        """Apply new camera settings: the camera thread tears the pipeline
+        down and starts it again with the current config. A running
+        recording is finished first. No-op state-wise in mock mode (the mock
+        loop reads config every frame)."""
+        if self.backend == "picamera2":
+            self._restart.set()
+        else:
+            self._kill_proc()
+
+    def state(self):
+        pipe = self._pipe
+        out = {"backend": self.backend}
+        if self.backend == "picamera2" and pipe is not None:
+            out.update({"rec_size": "x".join(map(str, pipe.rec_size)), "fps": pipe.fps,
+                        "preroll": self.config["preroll_seconds"]})
+        return out
 
     def _kill_proc(self):
         proc = self._proc
@@ -178,61 +221,98 @@ class CameraManager:
 
     @property
     def recording(self):
-        return self._rec_file is not None
+        return self._rec_path is not None
 
     def recording_state(self):
         with self._rec_lock:
-            if not self._rec_file:
+            if self._rec_path is None:
                 return {"recording": False}
             return {
                 "recording": True,
-                "duration": round(time.time() - self._rec_started, 1),
+                "duration": round(time.time() - self._rec_started + self._rec_preroll, 1),
                 "file": self._rec_path.name,
                 "audio": self._rec_audio,
             }
 
     def start_recording(self):
         with self._rec_lock:
-            if self._rec_file:
+            if self._rec_path is not None:
                 raise RuntimeError("already recording")
-            name = time.strftime("rec_%Y%m%d_%H%M%S") + ".mjpeg"
-            self._rec_path = self.captures_dir / name
-            self._rec_file = open(self._rec_path, "wb")
+            stem = time.strftime("rec_%Y%m%d_%H%M%S")
+            pipe = self._pipe
+            if self.backend == "picamera2" and pipe is not None:
+                path = self.captures_dir / (stem + ".h264")
+                self._rec_preroll = pipe.rec.start_file(path)   # writes the pre-roll
+                self._rec_out = pipe.rec
+            elif self.backend == "picamera2":
+                raise RuntimeError("camera is restarting, try again in a moment")
+            else:
+                path = self.captures_dir / (stem + ".mjpeg")
+                self._rec_file = open(path, "wb")
+                self._rec_preroll = 0.0
+            self._rec_path = path
             self._rec_started = time.time()
             self._rec_frames = 0
             self._rec_rotate = self.soft_rotation()   # frames are stored unrotated
-            # Audio starts in the same lock so both files begin together.
-            # (AudioManager never takes this lock, so no deadlock.)
+            # Audio starts in the same lock so both files begin together, with
+            # the same pre-roll as the video. (AudioManager never takes this
+            # lock, so no deadlock.)
             self._rec_audio = bool(
-                self.audio and self.audio.start_recording(self._rec_path.with_suffix(".wav")))
-            return name
+                self.audio and self.audio.start_recording(
+                    path.with_suffix(".wav"), preroll=self._rec_preroll))
+            return path.name
 
     def stop_recording(self):
         with self._rec_lock:
-            if not self._rec_file:
+            if self._rec_path is None:
                 raise RuntimeError("not recording")
-            self._rec_file.close()
-            if self.audio:
-                self.audio.stop_recording()
-            duration = time.time() - self._rec_started
-            meta = {
-                "frames": self._rec_frames,
-                "duration": round(duration, 2),
-                "fps": round(self._rec_frames / duration, 2) if duration > 0 else 0,
-                "width": self.config["stream_width"],
-                "height": self.config["stream_height"],
-                "audio": self._rec_audio,
-                "rotate": self._rec_rotate,
-            }
+            if self._rec_out is not None:                       # picamera2: .h264
+                stats = self._rec_out.stop_file()
+                if self.audio:
+                    self.audio.stop_recording()
+                w, h = self.config["rec_size"].split("x")
+                meta = {
+                    "frames": stats["frames"],
+                    "duration": stats["duration"],
+                    "fps": stats["fps"] or self.config["rec_fps"],
+                    "width": int(w), "height": int(h),
+                    "codec": "h264",
+                    "preroll": round(self._rec_preroll, 2),
+                }
+            else:                                               # rpicam/mock: .mjpeg
+                self._rec_file.close()
+                if self.audio:
+                    self.audio.stop_recording()
+                duration = time.time() - self._rec_started
+                meta = {
+                    "frames": self._rec_frames,
+                    "duration": round(duration, 2),
+                    "fps": round(self._rec_frames / duration, 2) if duration > 0 else 0,
+                    "width": self.config["stream_width"],
+                    "height": self.config["stream_height"],
+                }
+            meta.update({"audio": self._rec_audio, "rotate": self._rec_rotate})
             rec_path = self._rec_path
-            rec_path.with_suffix(".json").write_text(json.dumps(meta))
             name = rec_path.name
             self._rec_file = None
+            self._rec_out = None
             self._rec_path = None
-        # With auto_mp4 on, every finished clip is queued for conversion so the
-        # gallery serves files that play anywhere. Otherwise it stays .mjpeg
-        # until "to mp4" is pressed.
-        if self.config["auto_mp4"] and not self._stop.is_set():
+            self._rec_preroll = 0.0
+            if meta["frames"] == 0:
+                # No video arrived (camera stalled or restarted at once): an
+                # empty clip only clutters the gallery.
+                for f in (rec_path, rec_path.with_suffix(".wav")):
+                    try:
+                        f.unlink()
+                    except OSError:
+                        pass
+                print(f"[camera] {name}: no video frames, discarded")
+                return name, dict(meta, discarded=True)
+            rec_path.with_suffix(".json").write_text(json.dumps(meta))
+        # .h264 is always muxed to mp4 (a raw stream won't play anywhere; it's
+        # a copy, so it takes seconds). With auto_mp4 on, .mjpeg is converted
+        # too; otherwise it waits for "to mp4" in the gallery.
+        if (rec_path.suffix == ".h264" or self.config["auto_mp4"]) and not self._stop.is_set():
             try:
                 self.convert_to_mp4(name)
             except (RuntimeError, FileNotFoundError) as e:
@@ -245,10 +325,14 @@ class CameraManager:
         with self._transcode_lock:
             return set(self._transcoding)
 
-    def _queue_backlog(self):
-        """Queue .mjpeg recordings left over from before auto_mp4 (or from a
-        crash mid-conversion), oldest first, skipping ones that failed before."""
-        for path in sorted(self.captures_dir.glob("rec_*.mjpeg")):
+    def _queue_backlog(self, include_mjpeg=True):
+        """Queue recordings not yet in mp4 (left over from a crash or a restart
+        mid-conversion, or from before auto_mp4), oldest first, skipping ones
+        that failed before."""
+        paths = list(self.captures_dir.glob("rec_*.h264"))
+        if include_mjpeg:
+            paths += self.captures_dir.glob("rec_*.mjpeg")
+        for path in sorted(paths, key=lambda p: p.name):
             meta = self._read_meta(path)
             if meta.get("mp4_failed"):
                 continue
@@ -266,9 +350,9 @@ class CameraManager:
             return {}
 
     def convert_to_mp4(self, name):
-        """Queue a background mp4 transcode of an existing .mjpeg recording."""
+        """Queue a background mp4 conversion of an .mjpeg or .h264 recording."""
         path = self.captures_dir / name
-        if path.suffix != ".mjpeg" or not path.is_file():
+        if path.suffix not in (".mjpeg", ".h264") or not path.is_file():
             raise FileNotFoundError(name)
         if not has_ffmpeg():
             raise RuntimeError("ffmpeg not installed")
@@ -285,7 +369,9 @@ class CameraManager:
             except queue.Empty:
                 continue
             try:
-                if path.is_file():
+                if path.is_file() and path.suffix == ".h264":
+                    self._mux_h264(path, self._read_meta(path))
+                elif path.is_file():
                     self._transcode_worker(path, self._read_meta(path))
             except Exception as e:          # never let one bad file stop the queue
                 print(f"[camera] transcode of {path.name} crashed: {e}")
@@ -352,6 +438,57 @@ class CameraManager:
             except OSError:
                 pass
 
+    def _mux_h264(self, h264_path, meta):
+        """.h264 (+ .wav) -> .mp4 without re-encoding the video: seconds, not
+        minutes. Portrait clips get a rotation tag instead of a transpose, which
+        players, browsers and ffmpeg's own thumbnails honour."""
+        fps = meta.get("fps") or self.config["rec_fps"] or 30
+        mp4_path = h264_path.with_suffix(".mp4")
+        tmp = h264_path.with_suffix(".mp4.tmp")
+        wav_path = h264_path.with_suffix(".wav")
+        has_wav = wav_path.is_file() and wav_path.stat().st_size > 44
+        rotate = meta.get("rotate", 0)
+        rot_in, rot_out = [], []
+        if rotate == 90:
+            if ffmpeg_has_display_rotation():
+                rot_in = ["-display_rotation", "-90"]      # counter-clockwise degrees
+            else:
+                rot_out = ["-metadata:s:v:0", "rotate=90"]  # clockwise degrees
+        video_in = rot_in + ["-fflags", "+genpts", "-framerate", f"{fps:.3f}",
+                             "-f", "h264", "-i", str(h264_path)]
+        audio_in = ["-i", str(wav_path), "-map", "0:v:0", "-map", "1:a:0",
+                    "-c:a", "aac", "-b:a", "96k"]
+        tail = ["-c:v", "copy"] + rot_out + ["-movflags", "+faststart", "-f", "mp4", str(tmp)]
+        ok = muxed_audio = False
+        for with_audio in ([True] if has_wav else []) + [False]:
+            cmd = (["ffmpeg", "-y", "-loglevel", "error"] + video_in
+                   + (audio_in if with_audio else []) + tail)
+            try:
+                r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            except OSError:
+                break
+            if r.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
+                ok, muxed_audio = True, with_audio
+                break
+            print(f"[camera] mux {h264_path.name} failed: {r.stderr.decode(errors='replace')[-300:]}")
+            if tmp.exists():
+                tmp.unlink()
+        if ok:
+            tmp.replace(mp4_path)
+            mp4_path.with_suffix(".json").write_text(
+                json.dumps(dict(meta, container="mp4", audio=muxed_audio)))
+            for old in [h264_path] + ([wav_path] if muxed_audio else []):
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+            print(f"[camera] muxed {h264_path.name} -> {mp4_path.name}")
+        else:
+            try:
+                h264_path.with_suffix(".json").write_text(json.dumps(dict(meta, mp4_failed=True)))
+            except OSError:
+                pass
+
     # --- replay of saved .mjpeg recordings ---
 
     @staticmethod
@@ -414,8 +551,64 @@ class CameraManager:
     def _run(self):
         if self.mock:
             self._run_mock()
-        else:
-            self._run_real()
+            return
+        want = self.config["camera_backend"]
+        if want != "rpicam" and picam.available():
+            if self._run_picam():
+                return                      # stopped normally
+            print("[camera] Picamera2 could not start; falling back to rpicam-vid")
+        elif want == "picamera2":
+            print("[camera] Picamera2 not installed (sudo apt install python3-picamera2); "
+                  "using rpicam-vid")
+        self.backend = "rpicam"
+        self._run_real()
+
+    def _target_fps(self):
+        return self.config["night_fps"] if self.is_dark() else self.config["rec_fps"]
+
+    def _run_picam(self):
+        """Run the Picamera2 pipeline until stop. Restarts it on settings
+        changes and if frames stop arriving; switches the frame rate between
+        day and night between recordings. Returns False if it never started
+        (the caller falls back to rpicam-vid)."""
+        self.backend = "picamera2"
+        started_once = False
+        while not self._stop.is_set():
+            self._restart.clear()
+            pipe = picam.PicamPipeline(self.config, self._flips, self._publish)
+            try:
+                pipe.start(self._target_fps())
+            except Exception as e:
+                print(f"[camera] Picamera2 start failed: {e!r}")
+                if not started_once:
+                    self.backend = None
+                    return False
+                self._stop.wait(10)
+                continue
+            started_once = True
+            self._pipe = pipe
+            since = time.monotonic()
+            while not self._stop.is_set() and not self._restart.is_set():
+                self._restart.wait(2.0)
+                want = self._target_fps()
+                if want != pipe.fps and not self.recording:
+                    try:
+                        pipe.set_fps(want)
+                    except Exception as e:
+                        print(f"[camera] frame rate change failed: {e!r}")
+                if time.monotonic() - since > 15 and not pipe.healthy():
+                    print("[camera] no frames from Picamera2 for 10 s, restarting it")
+                    break
+            if self.recording:
+                try:
+                    self.stop_recording()
+                except RuntimeError:
+                    pass
+            self._pipe = None
+            pipe.stop()
+            if not self._stop.is_set():
+                self._stop.wait(1.0)
+        return True
 
     def _rpicam_cmd(self):
         cmd = [

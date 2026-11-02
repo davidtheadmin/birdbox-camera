@@ -32,7 +32,7 @@ from pathlib import Path
 import status as system_status
 
 GB = 1024 ** 3
-RECORDING_EXTS = {".mjpeg", ".mp4"}
+RECORDING_EXTS = {".mjpeg", ".mp4", ".h264"}
 MARKER_NAME = ".archived_through"
 NAME_RE = re.compile(r"^rec_(\d{8})_(\d{6})\.")
 

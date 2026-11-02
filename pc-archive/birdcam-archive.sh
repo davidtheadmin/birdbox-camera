@@ -87,7 +87,7 @@ prev=0
 
 newest=0
 shopt -s nullglob
-for f in "$ARCHIVE_DIR"/*.mjpeg "$ARCHIVE_DIR"/*.mp4; do
+for f in "$ARCHIVE_DIR"/*.mjpeg "$ARCHIVE_DIR"/*.mp4 "$ARCHIVE_DIR"/*.h264; do
     mtime=$(stat -c %Y "$f")
     [ "$mtime" -le "$cutoff" ] || continue   # touched too recently: might still be mid-write/transcode
     ctime=$(capture_time "$f")
@@ -133,7 +133,7 @@ else
 
     candidates=()
     shopt -s nullglob
-    for f in "$ARCHIVE_DIR"/*.mjpeg "$ARCHIVE_DIR"/*.mp4; do
+    for f in "$ARCHIVE_DIR"/*.mjpeg "$ARCHIVE_DIR"/*.mp4 "$ARCHIVE_DIR"/*.h264; do
         ctime=$(capture_time "$f")
         [ -n "$ctime" ] || ctime=$(stat -c %Y "$f")
         [ "$ctime" -le "$age_cutoff" ] || continue

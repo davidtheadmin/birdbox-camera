@@ -52,6 +52,7 @@ async function pollStatus() {
     updateRec(s.recording);
     updateMotion(s.motion);
     updateSound(s.audio);
+    updateCameraInfo(s.camera);
   } catch (e) { /* transient; keep last values */ }
 }
 
@@ -554,7 +555,7 @@ async function loadGallery() {
         : item.type === "mp4" ? '<span class="badge-video">▶ mp4</span>'
         : item.type === "mjpeg" ? '<span class="badge-video">▶ mjpeg</span>'
         : "";
-      const convertBtn = item.type === "mjpeg" && !item.processing
+      const convertBtn = (item.type === "mjpeg" || item.type === "h264") && !item.processing
         ? '<button class="convert" title="Convert to mp4">mp4</button>' : "";
       div.innerHTML =
         `<div class="gthumb"><img loading="lazy" src="/thumb/${encodeURIComponent(item.name)}" alt="${item.name}">` +
@@ -567,7 +568,7 @@ async function loadGallery() {
         `<button class="danger" title="Delete">&#10005;</button></div>`;
       const thumb = div.querySelector("img");
       thumb.onload = () => thumb.classList.toggle("tall", thumb.naturalHeight > thumb.naturalWidth);
-      if (item.processing) div.classList.add("processing");
+      if (item.processing || item.type === "h264") div.classList.add("processing");
       else div.querySelector("img").onclick = () => openModal(item);
       const cb = div.querySelector(".convert");
       if (cb) cb.onclick = async () => {
@@ -637,6 +638,18 @@ $("modal").onclick = () => {
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") { $("modal").onclick(); closeSettings(); }
 });
+
+// ---------- camera backend info (settings panel) ----------
+
+function updateCameraInfo(c) {
+  if (!c) return;
+  const el = $("camera-backend");
+  el.textContent = c.backend === "picamera2"
+    ? `Recording ${c.rec_size} H.264 at ${c.fps} fps, ${c.preroll} s pre-roll (Picamera2).`
+    : c.backend === "rpicam"
+      ? "Recording the live stream as mjpeg (rpicam-vid fallback; Picamera2 not available). The settings below don't apply."
+      : c.backend === "mock" ? "Mock camera (dev mode)." : "Camera starting…";
+}
 
 // ---------- field of view ----------
 

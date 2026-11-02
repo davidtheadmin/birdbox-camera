@@ -24,7 +24,8 @@ prototype and still applies to it where it says so.
 Pi setup: `dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4`,
 `dtparam=i2s=on` and `dtoverlay=googlevoicehat-soundcard` in
 `/boot/firmware/config.txt`, `sudo raspi-config nonint do_i2c 0`, packages
-`python3-flask python3-smbus2 python3-pil python3-numpy ffmpeg i2c-tools alsa-utils`. Auto-dimming is
+`python3-flask python3-smbus2 python3-pil python3-numpy ffmpeg i2c-tools alsa-utils`
+plus `python3-picamera2` (`--no-install-recommends`). Auto-dimming is
 on a log-lux scale (`lux_off`, `lux_full`); sensor history is kept 6 h raw
 plus 14 days of minute averages in `history.csv`. The LDR issues below
 (saturation, LED feedback, hysteresis/`sample_dark`) don't apply to these
@@ -48,8 +49,10 @@ There is no glazing between lens and subject.
 
 ```
 app.py            Flask app, all HTTP routes, wires everything together
-camera.py         CameraManager: rpicam-vid MJPEG pipeline, snapshots,
-                  recording, mp4 transcode worker, thumbnails
+camera.py         CameraManager: backend choice, live frames, snapshots,
+                  recording, mp4 transcode/mux queue, thumbnails
+picam.py          Picamera2 pipeline: H.264 1080p recordings with pre-roll,
+                  MJPEG live view from the second stream
 ledcontrol.py     LED auto/manual control loop + sensor history ring buffer
 hardware.py       GPIO, PWM, LDR read, mock-mode fallback
 audio.py          AudioManager: arecord pipeline for the I2S mic, level meter,
@@ -78,6 +81,21 @@ git-ignored) holds recordings + `.json` sidecars with duration/fps metadata.
   remove it with its recording; `convert_to_mp4` muxes it in (AAC) and deletes
   it only if the mux succeeded. Sound auto-record (`sound_trigger`) reuses
   `motion_cooldown` and, like motion, only stops recordings it started.
+- **Two camera backends** (`camera_backend`, default `auto`). `picamera2`
+  (picam.py): one sensor, two ISP streams — main `rec_size` (1920x1080) into
+  the hardware H.264 encoder *all the time* into `RecordBuffer` (a ring that
+  always starts on a keyframe; `iperiod` = 1 s), lores = live view size into
+  the hardware MJPEG encoder for viewers/motion/snapshots. A recording writes
+  the ring (≥ `preroll_seconds`) then live frames to `rec_*.h264`; the audio
+  ring in AudioManager supplies the same pre-roll to the `.wav`. On stop the
+  clip is muxed to mp4 with `-c:v copy` (seconds) using the fps measured from
+  sensor timestamps; portrait clips get a rotation tag (`-display_rotation -90`
+  where ffmpeg has it, ≥ 6.1; the `rotate` metadata tag on 5.x). Frame rate is `rec_fps` by day
+  and `night_fps` while the IR LEDs are on (switched only between
+  recordings, ring cleared). If Picamera2 is missing or fails at first start,
+  `rpicam` (rpicam-vid MJPEG, the old path) takes over. Settings that need a
+  restart (`rec_*`, `preroll_seconds`, stream, fov, rotation, focus) end a
+  running recording first.
 - **Recordings become mp4 automatically** (`auto_mp4`, default on). Each
   finished `.mjpeg` goes into a single-worker queue in `CameraManager`
   (`nice -n 19` ffmpeg, hardware `h264_v4l2m2m` first, `.wav` muxed as AAC);
@@ -246,6 +264,14 @@ each time. This state is also surfaced in the UI — the gallery header shows
 save that violates this.
 
 ### Testing
+
+`test_picam.py` (`python3 -m unittest test_picam`) covers the pre-roll ring
+(starts on a keyframe, ≥ pre-roll, no gaps, waits for a keyframe, bounded
+memory, cleared on fps change) and the matching audio pre-roll. The whole
+picamera2 path was also run end to end with a fake pipeline feeding real
+x264 1080p30 access units (record with pre-roll → mux → clean decode, A/V
+lengths within 0.05 s, night fps switch, restart mid-recording, fallback);
+it has not yet run on a real unit.
 
 `test_cleanup.py` (plain `unittest`, no pytest dependency — run with
 `python3 -m unittest test_cleanup`) exercises `cleanup.py` against a scratch

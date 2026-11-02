@@ -39,6 +39,7 @@ camera = CameraManager(config, CAPTURES_DIR)
 audio = AudioManager(config)
 audio.attach_camera(camera)
 camera.audio = audio
+camera.is_dark = lambda: led.get_state()["brightness"] > 0   # IR LEDs on -> night frame rate
 motion = MotionDetector(camera, config)
 cleanup = CleanupManager(config, CAPTURES_DIR, camera)
 
@@ -184,7 +185,7 @@ def audio_set():
 
 # ---------- gallery ----------
 
-MEDIA_EXTS = {".jpg", ".mjpeg", ".mp4", ".wav"}  # .wav: served, not listed
+MEDIA_EXTS = {".jpg", ".mjpeg", ".mp4", ".h264", ".wav"}  # .wav: served, not listed
 
 
 def _safe_media_path(name):
@@ -210,7 +211,7 @@ def _taken_at(path):
 
 @app.route("/api/gallery")
 def gallery():
-    kinds = {".mp4": "mp4", ".mjpeg": "mjpeg"}
+    kinds = {".mp4": "mp4", ".mjpeg": "mjpeg", ".h264": "h264"}
     transcoding = camera.transcoding_names()
     items = []
     for path in CAPTURES_DIR.iterdir():
@@ -257,8 +258,12 @@ def thumb(name):
         return send_from_directory(CAPTURES_DIR, name)
     if path.suffix == ".wav":
         abort(404)
-    if path.suffix == ".mp4":
+    if path.suffix in (".mp4", ".h264"):
         frame = camera.mp4_thumbnail(path)
+        if path.suffix == ".h264":   # raw stream has no rotation tag yet
+            rotate = CameraManager._read_meta(path).get("rotate", 0)
+            if frame is not None and rotate:
+                frame = rotate_jpeg(frame, rotate)
     else:
         frame = CameraManager.first_frame(path)
         rotate = CameraManager._read_meta(path).get("rotate", 0)
@@ -308,7 +313,7 @@ def media_delete(name):
     if path.suffix == ".wav":
         return jsonify({"error": "delete the recording, not its audio"}), 400
     path.unlink()
-    if path.suffix in (".mjpeg", ".mp4"):
+    if path.suffix in (".mjpeg", ".mp4", ".h264"):
         for extra in (path.with_suffix(".json"), path.with_suffix(".wav")):
             if extra.exists():
                 extra.unlink()
@@ -323,6 +328,7 @@ def api_status():
     s.update({
         "led": led.get_state(),
         "recording": camera.recording_state(),
+        "camera": camera.state(),
         "motion": motion.state(),
         "audio": audio.state(),
         "cleanup": cleanup.state(),
@@ -373,7 +379,8 @@ def config_get():
 def config_set():
     data = request.get_json(silent=True) or {}
     applied, errors = config.update(data)
-    camera_keys = {"flip_h", "flip_v", "rotation", "fov", "af_mode", "af_range", "lens_position"}
+    camera_keys = {"flip_h", "flip_v", "rotation", "fov", "af_mode", "af_range", "lens_position",
+                   "rec_size", "rec_fps", "rec_bitrate", "preroll_seconds"}
     if any(k.startswith("stream_") or k in camera_keys for k in applied):
         camera.restart_pipeline()
     if applied.get("auto_mp4"):

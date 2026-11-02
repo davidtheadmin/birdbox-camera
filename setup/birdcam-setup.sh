@@ -114,6 +114,8 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
 apt-get install -y -q git curl python3-flask python3-smbus2 python3-pil python3-numpy \
     ffmpeg i2c-tools alsa-utils
+# Picamera2: 1080p30 H.264 recordings alongside the live view (no GUI deps)
+apt-get install -y -q --no-install-recommends python3-picamera2
 ok "packages"
 
 say "Enabling I2C, PWM and I2S"
