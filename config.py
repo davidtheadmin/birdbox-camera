@@ -25,6 +25,8 @@ DEFAULTS = {
     "stream_quality": 80,  # MJPEG quality 1-100
     "flip_h": 0,           # mirror horizontally (--hflip)
     "flip_v": 0,           # mirror vertically (--vflip); both = 180° for an upside-down mount
+    "fov": "wide",         # wide = whole sensor (2304x1296 mode, full 120°);
+                           # zoom = centre crop (1536x864 mode, ~1.5x narrower)
 
     # --- focus (Camera Module 3 has a motorised lens) ---
     "af_mode": "continuous",  # continuous | manual
@@ -73,6 +75,7 @@ EDITABLE = {
     "stream_quality": (int, 10, 100),
     "flip_h": (int, 0, 1),
     "flip_v": (int, 0, 1),
+    "fov": (str, ["wide", "zoom"]),
     "af_mode": (str, ["continuous", "manual"]),
     "af_range": (str, ["normal", "macro", "full"]),
     "lens_position": (float, 0.0, 10.0),

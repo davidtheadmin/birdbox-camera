@@ -85,6 +85,10 @@ git-ignored) holds recordings + `.json` sidecars with duration/fps metadata.
   sidecar `mp4_failed` and is skipped at later start-ups ("mp4" in the gallery
   still forces it). Queued names count as `transcoding_names()`, so cleanup
   leaves them alone.
+- **Field of view is set by sensor mode** (`fov`, Wide/Zoom toggle under the
+  video): `wide` passes `--mode 2304:1296:10:P` (whole IMX708 sensor),
+  `zoom` passes `--mode 1536:864:10:P` (2/3 centre crop). Without `--mode`,
+  libcamera picks the cropped mode for a 720p stream.
 - **Settings live in a slide-in panel** (⚙ in the header), not in the grid; the
   right column (lights, motion, sound, history) spans the full height.
 - **rpicam flags are start-up only.** Changing flip, focus or stream settings

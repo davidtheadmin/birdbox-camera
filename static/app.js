@@ -635,6 +635,24 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape") { $("modal").onclick(); closeSettings(); }
 });
 
+// ---------- field of view ----------
+
+function updateFov(fov) {
+  document.querySelectorAll("#fov-toggle button").forEach(b =>
+    b.classList.toggle("active", b.dataset.fov === fov));
+}
+document.querySelectorAll("#fov-toggle button").forEach(btn => {
+  btn.onclick = async () => {
+    if (btn.classList.contains("active")) return;
+    updateFov(btn.dataset.fov);
+    try {
+      await api("/api/config", "POST", { fov: btn.dataset.fov });
+      toast(btn.dataset.fov === "wide" ? "Wide view — camera restarting…" : "Zoomed view — camera restarting…");
+    } catch (e) { toast("Error: " + e.message); }
+  };
+});
+api("/api/config").then(c => updateFov(c.fov)).catch(() => {});
+
 // ---------- settings ----------
 
 const settingsForm = $("settings-form");

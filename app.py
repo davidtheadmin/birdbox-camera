@@ -370,7 +370,7 @@ def config_get():
 def config_set():
     data = request.get_json(silent=True) or {}
     applied, errors = config.update(data)
-    camera_keys = {"flip_h", "flip_v", "af_mode", "af_range", "lens_position"}
+    camera_keys = {"flip_h", "flip_v", "fov", "af_mode", "af_range", "lens_position"}
     if any(k.startswith("stream_") or k in camera_keys for k in applied):
         camera.restart_pipeline()
     if applied.get("auto_mp4"):

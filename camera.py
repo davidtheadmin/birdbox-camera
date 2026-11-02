@@ -398,6 +398,13 @@ class CameraManager:
             "--nopreview",
             "--flush",
         ]
+        # Field of view. Without --mode, libcamera picks the IMX708's cropped
+        # 1536x864 mode for a 720p stream; name the mode so "wide" really is
+        # the whole sensor. Both modes are 2x2 binned, so quality is similar.
+        if self.config["fov"] == "zoom":
+            cmd += ["--mode", "1536:864:10:P"]
+        else:
+            cmd += ["--mode", "2304:1296:10:P"]
         # Orientation: both flags together == 180° rotation (upside-down mount).
         if self.config["flip_h"]:
             cmd.append("--hflip")
@@ -477,6 +484,8 @@ class CameraManager:
                 d.ellipse([bx + 14, by - 34, bx + 40, by - 8], fill=(130, 100, 70))
                 d.text((10, 10), time.strftime("%Y-%m-%d %H:%M:%S")
                        + "  [MOCK CAMERA]", fill=(200, 200, 200))
+                if self.config["fov"] == "zoom":   # same 2/3 centre crop as the real mode
+                    img = img.crop((w / 6, h / 6, w * 5 / 6, h * 5 / 6)).resize((w, h))
                 if self.config["flip_h"]:
                     img = img.transpose(Image.FLIP_LEFT_RIGHT)
                 if self.config["flip_v"]:
