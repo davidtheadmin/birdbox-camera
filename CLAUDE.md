@@ -88,8 +88,12 @@ git-ignored) holds recordings + `.json` sidecars with duration/fps metadata.
   the hardware MJPEG encoder for viewers/motion/snapshots. A recording writes
   the ring (≥ `preroll_seconds`) then live frames to `rec_*.h264`; the audio
   ring in AudioManager supplies the same pre-roll to the `.wav`. On stop the
-  clip is muxed to mp4 with `-c:v copy` (seconds) using the fps measured from
-  sensor timestamps; portrait clips get a rotation tag (`-display_rotation -90`
+  clip is muxed to mp4 with `-c:v copy` (seconds). **Don't trust encoder
+  timestamps or our buffer count for timing** — on the Pi a clip came out at
+  2x speed with a frozen second half. The mux counts the real frames with
+  ffprobe and divides by the real length (the .wav, else the arrival clock),
+  then stamps every frame with the `setts` bsf (`-framerate` is ignored when
+  the SPS has timing). Pre-roll is measured on the arrival clock too; portrait clips get a rotation tag (`-display_rotation -90`
   where ffmpeg has it, ≥ 6.1; the `rotate` metadata tag on 5.x). Frame rate is `rec_fps` by day
   and `night_fps` while the IR LEDs are on (switched only between
   recordings, ring cleared). If Picamera2 is missing or fails at first start,

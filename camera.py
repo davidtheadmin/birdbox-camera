@@ -273,8 +273,10 @@ class CameraManager:
                 w, h = self.config["rec_size"].split("x")
                 meta = {
                     "frames": stats["frames"],
-                    "duration": stats["duration"],
+                    "duration": stats["wall"] or stats["duration"],
+                    "wall": stats["wall"],
                     "fps": stats["fps"] or self.config["rec_fps"],
+                    "fps_encoder_ts": stats["fps"],
                     "width": int(w), "height": int(h),
                     "codec": "h264",
                     "preroll": round(self._rec_preroll, 2),
@@ -438,15 +440,59 @@ class CameraManager:
             except OSError:
                 pass
 
+    @staticmethod
+    def _count_h264_frames(path):
+        """Frames (access units) in a raw H.264 file, as ffmpeg sees them."""
+        try:
+            r = subprocess.run(
+                ["ffprobe", "-v", "error", "-f", "h264", "-select_streams", "v:0",
+                 "-count_packets", "-show_entries", "stream=nb_read_packets",
+                 "-of", "csv=p=0", str(path)],
+                capture_output=True, text=True, timeout=120)
+            return int(r.stdout.strip().splitlines()[0])
+        except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+            return 0
+
+    @staticmethod
+    def _wav_seconds(path):
+        import wave
+        try:
+            with wave.open(str(path)) as w:
+                return w.getnframes() / float(w.getframerate())
+        except (OSError, EOFError, wave.Error):
+            return 0.0
+
+    def _clip_fps(self, h264_path, meta, wav_path, has_wav):
+        """Frame rate to stamp on a raw .h264 clip. Raw H.264 carries no
+        timing, so take the frames really in the file and divide by how long
+        the clip really lasted: the .wav (exact, 48 kHz samples, same start
+        and stop as the video) or else the wall clock. Encoder timestamps and
+        our own buffer count are only a fallback; on the Pi they came out 2x."""
+        frames = self._count_h264_frames(h264_path) or meta.get("frames", 0)
+        span, source = 0.0, None
+        if has_wav:
+            span, source = self._wav_seconds(wav_path), "wav"
+        if span < 0.5 and meta.get("wall"):
+            span, source = meta["wall"], "clock"
+        fps = frames / span if frames and span >= 0.5 else 0
+        if not 3 <= fps <= 61:
+            fps, source = meta.get("fps") or self.config["rec_fps"] or 30, "encoder"
+        print(f"[camera] {h264_path.name}: {frames} frames over {span:.2f} s ({source}) "
+              f"-> {fps:.2f} fps (encoder timestamps said {meta.get('fps_encoder_ts', '?')}, "
+              f"buffers {meta.get('frames', '?')})")
+        return fps, frames
+
     def _mux_h264(self, h264_path, meta):
         """.h264 (+ .wav) -> .mp4 without re-encoding the video: seconds, not
         minutes. Portrait clips get a rotation tag instead of a transpose, which
         players, browsers and ffmpeg's own thumbnails honour."""
-        fps = meta.get("fps") or self.config["rec_fps"] or 30
         mp4_path = h264_path.with_suffix(".mp4")
         tmp = h264_path.with_suffix(".mp4.tmp")
         wav_path = h264_path.with_suffix(".wav")
         has_wav = wav_path.is_file() and wav_path.stat().st_size > 44
+        fps, frames = self._clip_fps(h264_path, meta, wav_path, has_wav)
+        meta = dict(meta, fps=round(fps, 3), frames=frames,
+                    duration=round(frames / fps, 2) if fps else meta.get("duration"))
         rotate = meta.get("rotate", 0)
         rot_in, rot_out = [], []
         if rotate == 90:
@@ -458,11 +504,17 @@ class CameraManager:
                              "-f", "h264", "-i", str(h264_path)]
         audio_in = ["-i", str(wav_path), "-map", "0:v:0", "-map", "1:a:0",
                     "-c:a", "aac", "-b:a", "96k"]
+        # Stamp every frame's time explicitly: -framerate alone is ignored when
+        # the stream carries its own timing in the SPS. setts needs ffmpeg 5.1+
+        # for time_base; without it, fall back to -framerate.
+        stamp = ["-bsf:v", f"setts=ts=N*1000000/{fps:.4f}:time_base=1/1000000",
+                 "-video_track_timescale", "90000"]
         tail = ["-c:v", "copy"] + rot_out + ["-movflags", "+faststart", "-f", "mp4", str(tmp)]
         ok = muxed_audio = False
-        for with_audio in ([True] if has_wav else []) + [False]:
+        attempts = [(a, s) for a in (([True] if has_wav else []) + [False]) for s in (True, False)]
+        for with_audio, with_stamp in attempts:
             cmd = (["ffmpeg", "-y", "-loglevel", "error"] + video_in
-                   + (audio_in if with_audio else []) + tail)
+                   + (audio_in if with_audio else []) + (stamp if with_stamp else []) + tail)
             try:
                 r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             except OSError:

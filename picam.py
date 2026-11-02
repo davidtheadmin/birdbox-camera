@@ -57,10 +57,11 @@ class RecordBuffer(_OutputBase):
         super().__init__()
         self.preroll_us = int(max(0.0, preroll_seconds) * 1e6)
         self._lock = threading.Lock()
-        self._ring = collections.deque()      # (timestamp_us, keyframe, bytes)
+        self._ring = collections.deque()      # (timestamp_us, keyframe, bytes, arrival)
         self._file = None
         self._stats = None
-        self.last_frame_at = 0.0               # time.monotonic() of the last frame
+        self.clock = time.monotonic             # replaceable in tests
+        self.last_frame_at = 0.0               # clock() of the last frame
 
     # --- encoder side (runs on the encoder's thread) ---
 
@@ -70,27 +71,29 @@ class RecordBuffer(_OutputBase):
         ts = int(timestamp) if timestamp is not None else int(time.monotonic() * 1e6)
         data = bytes(frame)
         with self._lock:
-            self.last_frame_at = time.monotonic()
+            now = self.last_frame_at = self.clock()
             if self._file is not None:
-                self._write(ts, keyframe, data)
-            self._ring.append((ts, keyframe, data))
-            self._trim(ts)
+                self._write(ts, keyframe, data, now)
+            self._ring.append((ts, keyframe, data, now))
+            self._trim(now)
 
-    def _trim(self, now_ts):
+    def _trim(self, now):
         """Drop everything before the newest keyframe that is still at least
         preroll old, so the buffer always starts on a keyframe and covers at
-        least the pre-roll (up to one keyframe interval more)."""
-        cutoff = now_ts - self.preroll_us
+        least the pre-roll (up to one keyframe interval more). Measured on the
+        clock when frames arrived: encoder timestamps can't be trusted for
+        durations (they came out at 2x on the Pi)."""
+        cutoff = now - self.preroll_us / 1e6
         keep_from = None
-        for i, (t, k, _) in enumerate(self._ring):
-            if t > cutoff:
+        for i, (_, k, _, a) in enumerate(self._ring):
+            if a > cutoff:
                 break
             if k:
                 keep_from = i
         for _ in range(keep_from or 0):
             self._ring.popleft()
 
-    def _write(self, ts, keyframe, data):
+    def _write(self, ts, keyframe, data, arrival):
         s = self._stats
         if s["frames"] == 0 and not keyframe:
             return                             # a decodable file starts on a keyframe
@@ -104,7 +107,9 @@ class RecordBuffer(_OutputBase):
         s["frames"] += 1
         if s["first_ts"] is None:
             s["first_ts"] = ts
+            s["first_at"] = arrival
         s["last_ts"] = ts
+        s["last_at"] = arrival
 
     def clear(self):
         """Forget the buffer (after a frame-rate change: mixed rates in one
@@ -121,28 +126,33 @@ class RecordBuffer(_OutputBase):
         with self._lock:
             self._file = f
             self._stats = {"frames": 0, "first_ts": None, "last_ts": None}
-            now_ts = self._ring[-1][0] if self._ring else None
-            for t, k, d in self._ring:
-                self._write(t, k, d)
-            first = self._stats["first_ts"]
-            preroll = (now_ts - first) / 1e6 if first is not None else 0.0
+            for t, k, d, a in self._ring:
+                self._write(t, k, d, a)
+            first = self._stats.get("first_at")
+            preroll = self.clock() - first if first is not None else 0.0
             self._stats["preroll"] = round(preroll, 3)
             return preroll
 
     def stop_file(self):
-        """Close the file. Returns frames, measured fps, duration, pre-roll."""
+        """Close the file. Returns the buffers written, the fps those imply
+        from the encoder timestamps, the wall-clock span, and the pre-roll.
+        These are hints only: the mux counts the real frames in the file and
+        times them against the .wav (see CameraManager._mux_h264)."""
         with self._lock:
             f, s = self._file, self._stats
             self._file = None
         if f is not None:
             f.close()
         if not s or s["frames"] == 0:
-            return {"frames": 0, "fps": 0, "duration": 0, "preroll": 0}
+            return {"frames": 0, "fps": 0, "duration": 0, "wall": 0, "preroll": 0}
         span = (s["last_ts"] - s["first_ts"]) / 1e6
         fps = (s["frames"] - 1) / span if span > 0 else 0
+        wall = s["last_at"] - s["first_at"]
+        if s["frames"] > 1:
+            wall *= s["frames"] / (s["frames"] - 1)      # include the last frame's own time
         duration = s["frames"] / fps if fps else 0
-        return {"frames": s["frames"], "fps": round(fps, 3),
-                "duration": round(duration, 2), "preroll": s.get("preroll", 0)}
+        return {"frames": s["frames"], "fps": round(fps, 3), "duration": round(duration, 2),
+                "wall": round(wall, 3), "preroll": s.get("preroll", 0)}
 
 
 class LiveOutput(_OutputBase):
@@ -255,7 +265,7 @@ class PicamPipeline:
         print(f"[picam] frame rate -> {fps} fps")
 
     def healthy(self, timeout=10.0):
-        now = time.monotonic()
+        now = time.monotonic()                 # rec.clock is time.monotonic here
         return (now - self.rec.last_frame_at < timeout
                 and now - self.live.last_frame_at < timeout)
 

@@ -17,10 +17,26 @@ from picam import RecordBuffer
 US = 1_000_000
 
 
-def feed(rb, start, count, fps=30, gop=30):
-    """Frames start..start+count-1; a keyframe every `gop` frames."""
+class Clock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+def buffer(preroll):
+    rb = RecordBuffer(preroll)
+    rb.clock = Clock()
+    return rb
+
+
+def feed(rb, start, count, fps=30, gop=30, ts_scale=1.0):
+    """Frames start..start+count-1 arriving in real time; a keyframe every
+    `gop` frames. ts_scale fakes encoder timestamps that run at the wrong rate."""
     for n in range(start, start + count):
-        rb.outputframe(b"F%05d;" % n, n % gop == 0, int(n * US / fps))
+        rb.clock.t += 1.0 / fps
+        rb.outputframe(b"F%05d;" % n, n % gop == 0, int(n * US / fps * ts_scale))
 
 
 def frames_in(path):
@@ -33,7 +49,7 @@ class RecordBufferTest(unittest.TestCase):
         self.path = self.dir / "rec.h264"
 
     def test_preroll_starts_on_keyframe_at_least_preroll_back(self):
-        rb = RecordBuffer(3.0)
+        rb = buffer(3.0)
         feed(rb, 0, 180)                      # 6 s, keyframes at 0,1,2,... s
         pre = rb.start_file(self.path)
         feed(rb, 180, 60)                     # 2 s more
@@ -47,7 +63,7 @@ class RecordBufferTest(unittest.TestCase):
         self.assertEqual(stats["frames"], len(got))
 
     def test_zero_preroll_still_starts_on_last_keyframe(self):
-        rb = RecordBuffer(0.0)
+        rb = buffer(0.0)
         feed(rb, 0, 75)                       # last keyframe at frame 60
         rb.start_file(self.path)
         feed(rb, 75, 10)
@@ -55,7 +71,8 @@ class RecordBufferTest(unittest.TestCase):
         self.assertEqual(frames_in(self.path)[0], 60)
 
     def test_start_before_first_keyframe_waits_for_one(self):
-        rb = RecordBuffer(3.0)
+        rb = buffer(3.0)
+        rb.clock.t += 0.03
         rb.outputframe(b"F00001;", False, 1)  # stream joined mid-GOP
         rb.start_file(self.path)
         rb.outputframe(b"F00002;", False, 2)
@@ -66,7 +83,7 @@ class RecordBufferTest(unittest.TestCase):
         self.assertEqual(stats["frames"], 2)
 
     def test_clear_after_fps_change_drops_old_rate_frames(self):
-        rb = RecordBuffer(3.0)
+        rb = buffer(3.0)
         feed(rb, 0, 90, fps=30)
         rb.clear()
         feed(rb, 0, 45, fps=15, gop=15)       # night: 15 fps
@@ -76,13 +93,23 @@ class RecordBufferTest(unittest.TestCase):
         self.assertAlmostEqual(stats["fps"], 15, places=1)
         self.assertGreaterEqual(pre, 2.9)
 
+    def test_wrong_encoder_timestamps_dont_change_preroll(self):
+        rb = buffer(3.0)
+        feed(rb, 0, 180, ts_scale=0.5)        # timestamps claim 60 fps
+        pre = rb.start_file(self.path)
+        feed(rb, 180, 30, ts_scale=0.5)
+        stats = rb.stop_file()
+        self.assertGreaterEqual(pre, 3.0)
+        self.assertLess(pre, 4.1)
+        self.assertAlmostEqual(stats["wall"], stats["frames"] / 30, delta=0.05)
+
     def test_ring_memory_is_bounded(self):
-        rb = RecordBuffer(3.0)
+        rb = buffer(3.0)
         feed(rb, 0, 30 * 60)                  # a minute of frames
         self.assertLessEqual(len(rb._ring), 30 * 4 + 1)
 
     def test_stop_without_frames(self):
-        rb = RecordBuffer(3.0)
+        rb = buffer(3.0)
         rb.start_file(self.path)
         self.assertEqual(rb.stop_file()["frames"], 0)
 
