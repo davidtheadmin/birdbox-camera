@@ -9,8 +9,11 @@ resolution never needs a camera restart:
   keeps appending live frames, so motion clips include the seconds *before*
   the trigger.
 - lores (the live-view size, default 1280x720) -> hardware MJPEG encoder ->
-  LiveOutput, throttled to stream_fps, for the browser, motion detection and
-  snapshots.
+  LiveOutput, for the browser, motion detection and snapshots. The encoder
+  only compresses every Nth frame (frame_skip_count): stream_fps while
+  someone is watching, a couple of fps otherwise (set_live_fps, driven by
+  CameraManager), so an unwatched unit doesn't JPEG-encode 30 frames a
+  second for nobody.
 
 The sensor runs at rec_fps (30) all the time, day and night.
 
@@ -187,6 +190,8 @@ class PicamPipeline:
         self.rec = RecordBuffer(config["preroll_seconds"])
         self.live = LiveOutput(publish, lambda: config["stream_fps"])
         self.fps = None
+        self.live_fps = None                  # rate the MJPEG encoder runs at
+        self._mjpeg = None
         self.rec_size = tuple(int(v) for v in config["rec_size"].split("x"))
         self._cam = None
 
@@ -239,6 +244,9 @@ class PicamPipeline:
             h264 = H264Encoder(bitrate=int(cfg["rec_bitrate"] * 1e6), repeat=True,
                                iperiod=int(cfg["rec_fps"]))   # a keyframe every ~1 s
             mjpeg = MJPEGEncoder()
+            self._mjpeg = mjpeg
+            self.fps = fps
+            self.set_live_fps(self.live_fps or cfg["stream_fps"])
             cam.start_encoder(encoder=h264, output=self.rec, name="main")
             cam.start_encoder(encoder=mjpeg, output=self.live, name="lores", quality=quality)
             cam.start()
@@ -256,6 +264,19 @@ class PicamPipeline:
         print(f"[picam] running: record {main[0]}x{main[1]} H.264 @ {fps} fps, "
               f"live {lores[0]}x{lores[1]} MJPEG @ {cfg['stream_fps']} fps, "
               f"pre-roll {cfg['preroll_seconds']} s")
+
+    def set_live_fps(self, target):
+        """Encode roughly `target` live frames a second by skipping sensor
+        frames before the MJPEG encoder (Picamera2 >= 0.3.17; older versions
+        ignore the attribute and LiveOutput's throttle still applies).
+        Safe to call from any thread while running."""
+        if not self.fps:
+            self.live_fps = target
+            return
+        skip = max(1, int(round(self.fps / max(1, target))))
+        self.live_fps = round(self.fps / skip, 2)
+        if self._mjpeg is not None:
+            self._mjpeg.frame_skip_count = skip
 
     def healthy(self, timeout=10.0):
         now = time.monotonic()                 # rec.clock is time.monotonic here

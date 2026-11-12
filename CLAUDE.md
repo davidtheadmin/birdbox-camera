@@ -95,7 +95,11 @@ git-ignored) holds recordings + `.json` sidecars with duration/fps metadata.
   then stamps every frame with the `setts` bsf (`-framerate` is ignored when
   the SPS has timing). Pre-roll is measured on the arrival clock too; portrait clips get a rotation tag (`-display_rotation -90`
   where ffmpeg has it, ≥ 6.1; the `rotate` metadata tag on 5.x). The sensor runs at `rec_fps` day and night (a
-  night mode at 15 fps was tried and removed). If Picamera2 is missing or fails at first start,
+  night mode at 15 fps was tried and removed). The live MJPEG encoder only runs at `stream_fps`
+  while a browser has `/stream` open (`CameraManager._viewers`); otherwise it skips
+  sensor frames down to `IDLE_LIVE_FPS` (2) or `1/motion_interval`, whichever is
+  higher (`PicamPipeline.set_live_fps` → Picamera2 `frame_skip_count`). Cuts idle
+  load/heat in the enclosed box. If Picamera2 is missing or fails at first start,
   `rpicam` (rpicam-vid MJPEG, the old path) takes over. Settings that need a
   restart (`rec_*`, `preroll_seconds`, stream, fov, rotation, focus) end a
   running recording first.

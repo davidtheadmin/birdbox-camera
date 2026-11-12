@@ -103,6 +103,67 @@ class RecordBufferTest(unittest.TestCase):
         self.assertEqual(rb.stop_file()["frames"], 0)
 
 
+class LiveRateTest(unittest.TestCase):
+    """The MJPEG encoder runs at stream_fps only while someone watches."""
+
+    class FakeEncoder:
+        frame_skip_count = 1
+
+    def pipeline(self, fps=30):
+        from picam import PicamPipeline
+        p = PicamPipeline({"preroll_seconds": 3.0, "stream_fps": 15,
+                           "rec_size": "1920x1080"}, lambda: (0, 0), lambda j: None)
+        p.fps, p._mjpeg = fps, self.FakeEncoder()
+        return p
+
+    def test_skip_count_matches_target(self):
+        p = self.pipeline()
+        p.set_live_fps(15)
+        self.assertEqual(p._mjpeg.frame_skip_count, 2)
+        p.set_live_fps(2)
+        self.assertEqual(p._mjpeg.frame_skip_count, 15)
+        p.set_live_fps(30)
+        self.assertEqual(p._mjpeg.frame_skip_count, 1)
+        p.set_live_fps(0)                       # never divide by zero / stop entirely
+        self.assertEqual(p._mjpeg.frame_skip_count, 30)
+
+    def test_before_start_only_remembers_target(self):
+        p = self.pipeline()
+        p.fps, p._mjpeg = None, None
+        p.set_live_fps(2)
+        self.assertEqual(p.live_fps, 2)
+
+    def camera(self, **cfg):
+        import camera as cammod
+        config = {"stream_fps": 15, "motion_enabled": 0, "motion_interval": 1.0}
+        config.update(cfg)
+        cam = cammod.CameraManager.__new__(cammod.CameraManager)
+        cam.config = config
+        cam._viewers, cam._viewers_lock = 0, __import__("threading").Lock()
+        cam._pipe = self.pipeline()
+        cam._stop = __import__("threading").Event()
+        cam.wait_frame = lambda seq, timeout=5.0: (b"jpeg", seq + 1)
+        return cam
+
+    def test_idle_rate_follows_motion_interval(self):
+        self.assertEqual(self.camera().live_target_fps(), 2)
+        self.assertEqual(self.camera(motion_enabled=1, motion_interval=0.25).live_target_fps(), 4)
+        self.assertEqual(self.camera(motion_enabled=1, motion_interval=0.2,
+                                     stream_fps=3).live_target_fps(), 3)
+
+    def test_viewer_raises_rate_and_leaving_lowers_it(self):
+        cam = self.camera()
+        cam._update_live_rate()
+        self.assertEqual(cam._pipe._mjpeg.frame_skip_count, 15)     # idle: 2 fps
+        stream = cam.mjpeg_stream()
+        next(stream)                                                # viewer connected
+        self.assertEqual(cam._viewers, 1)
+        self.assertEqual(cam._pipe._mjpeg.frame_skip_count, 2)      # 15 fps
+        stream.close()                                              # viewer left
+        self.assertEqual(cam._viewers, 0)
+        self.assertEqual(cam._pipe._mjpeg.frame_skip_count, 15)
+
+
 class AudioPrerollTest(unittest.TestCase):
     def test_wav_starts_preroll_seconds_back(self):
         from audio import AudioManager, CHUNK_FRAMES, RATE

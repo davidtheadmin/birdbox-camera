@@ -30,6 +30,11 @@ from pathlib import Path
 
 import picam
 
+# With nobody watching, the live stream only feeds motion detection and
+# snapshots, so the MJPEG encoder drops to this rate (or 1/motion_interval,
+# whichever is higher). Picamera2 backend only.
+IDLE_LIVE_FPS = 2
+
 JPEG_SOI = b"\xff\xd8"
 JPEG_EOI = b"\xff\xd9"
 
@@ -88,6 +93,8 @@ class CameraManager:
         self._frame_seq = 0
         self._stop = threading.Event()
         self._proc = None
+        self._viewers = 0           # open /stream connections
+        self._viewers_lock = threading.Lock()
 
         self.backend = "mock" if self.mock else None   # decided when the thread starts
         self._pipe = None           # running picam.PicamPipeline
@@ -145,7 +152,9 @@ class CameraManager:
         out = {"backend": self.backend}
         if self.backend == "picamera2" and pipe is not None:
             out.update({"rec_size": "x".join(map(str, pipe.rec_size)), "fps": pipe.fps,
-                        "preroll": self.config["preroll_seconds"]})
+                        "preroll": self.config["preroll_seconds"],
+                        "live_fps": pipe.live_fps})
+        out["viewers"] = self._viewers
         return out
 
     def _kill_proc(self):
@@ -184,16 +193,42 @@ class CameraManager:
             return self._frame
 
     def mjpeg_stream(self):
-        """Generator yielding multipart MJPEG parts for live viewing."""
-        seq = 0
-        while not self._stop.is_set():
-            frame, seq = self.wait_frame(seq)
-            if frame is None:
-                continue
-            yield (b"--frame\r\n"
-                   b"Content-Type: image/jpeg\r\n"
-                   b"Content-Length: " + str(len(frame)).encode() + b"\r\n\r\n"
-                   + frame + b"\r\n")
+        """Generator yielding multipart MJPEG parts for live viewing. While
+        it runs it counts as a viewer, which raises the live frame rate."""
+        self._viewer_delta(+1)
+        try:
+            seq = 0
+            while not self._stop.is_set():
+                frame, seq = self.wait_frame(seq)
+                if frame is None:
+                    continue
+                yield (b"--frame\r\n"
+                       b"Content-Type: image/jpeg\r\n"
+                       b"Content-Length: " + str(len(frame)).encode() + b"\r\n\r\n"
+                       + frame + b"\r\n")
+        finally:                    # client went away: Werkzeug closes the generator
+            self._viewer_delta(-1)
+
+    def _viewer_delta(self, d):
+        with self._viewers_lock:
+            self._viewers = max(0, self._viewers + d)
+        self._update_live_rate()
+
+    def live_target_fps(self):
+        """Full stream_fps while someone watches; otherwise just enough for
+        motion detection and reasonably fresh snapshots."""
+        full = self.config["stream_fps"]
+        if self._viewers > 0:
+            return full
+        idle = IDLE_LIVE_FPS
+        if self.config["motion_enabled"]:
+            idle = max(idle, math.ceil(1.0 / max(0.1, self.config["motion_interval"])))
+        return min(full, idle)
+
+    def _update_live_rate(self):
+        pipe = self._pipe
+        if pipe is not None:
+            pipe.set_live_fps(self.live_target_fps())
 
     # --- snapshot / recording ---
 
@@ -624,6 +659,7 @@ class CameraManager:
         while not self._stop.is_set():
             self._restart.clear()
             pipe = picam.PicamPipeline(self.config, self._flips, self._publish)
+            pipe.live_fps = self.live_target_fps()
             try:
                 pipe.start(self.config["rec_fps"])
             except Exception as e:
@@ -638,6 +674,7 @@ class CameraManager:
             since = time.monotonic()
             while not self._stop.is_set() and not self._restart.is_set():
                 self._restart.wait(2.0)
+                self._update_live_rate()     # picks up motion/stream setting changes
                 if time.monotonic() - since > 15 and not pipe.healthy():
                     print("[camera] no frames from Picamera2 for 10 s, restarting it")
                     break
