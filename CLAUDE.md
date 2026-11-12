@@ -99,7 +99,9 @@ git-ignored) holds recordings + `.json` sidecars with duration/fps metadata.
   while a browser has `/stream` open (`CameraManager._viewers`); otherwise it skips
   sensor frames down to `IDLE_LIVE_FPS` (2) or `1/motion_interval`, whichever is
   higher (`PicamPipeline.set_live_fps` → Picamera2 `frame_skip_count`). Cuts idle
-  load/heat in the enclosed box. If Picamera2 is missing or fails at first start,
+  load/heat in the enclosed box. The page itself drops `/stream` while a recording
+  plays in the modal or the tab is hidden (`setLivePaused` in app.js) — the
+  live MJPEG (~10–15 Mbit/s) otherwise starved mp4 playback over WiFi. If Picamera2 is missing or fails at first start,
   `rpicam` (rpicam-vid MJPEG, the old path) takes over. Settings that need a
   restart (`rec_*`, `preroll_seconds`, stream, fov, rotation, focus) end a
   running recording first.

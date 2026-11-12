@@ -602,7 +602,25 @@ function ensureGalleryPolling(items) {
   }
 }
 
+// The live view is a never-ending MJPEG download (~10-15 Mbit/s at 720p).
+// Pause it while it can't be seen - a recording is playing, or the tab is in
+// the background - so it doesn't starve playback on a weak WiFi link, and so
+// the Pi's encoder can drop to its idle rate (camera.py counts viewers).
+const liveImg = $("stream");
+const livePause = new Set();
+function setLivePaused(reason, paused) {
+  const was = livePause.size > 0;
+  paused ? livePause.add(reason) : livePause.delete(reason);
+  const now = livePause.size > 0;
+  if (now === was) return;
+  if (now) liveImg.src = "";                                  // drops the connection
+  else liveImg.src = "/stream?t=" + Date.now();
+}
+document.addEventListener("visibilitychange",
+  () => setLivePaused("hidden", document.hidden));
+
 function openModal(item) {
+  setLivePaused("modal", true);
   const img = $("modal-img"), vid = $("modal-video");
   if (item.type === "mp4") {
     img.classList.add("hidden");
@@ -634,6 +652,7 @@ $("modal").onclick = () => {
   au.pause(); au.removeAttribute("src"); au.load();
   const vid = $("modal-video");
   vid.pause?.(); vid.removeAttribute("src"); vid.load?.();
+  setLivePaused("modal", false);
 };
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") { $("modal").onclick(); closeSettings(); }
