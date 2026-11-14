@@ -9,6 +9,7 @@ as background threads inside it.
 """
 import atexit
 import json
+import socket
 import subprocess
 import threading
 import time
@@ -389,6 +390,25 @@ def config_set():
                     "config": config.as_dict()}), status_code
 
 
+def _listen_host():
+    """Listen on IPv6 and IPv4 at once ("::", dual-stack) where the system
+    allows it, else IPv4 only. birdcamN.local resolves to an IPv6 address
+    first, and a browser that tries only that got "unable to connect" while
+    the app listened on 0.0.0.0 (IPv4) alone."""
+    if not socket.has_ipv6:
+        return "0.0.0.0"
+    try:
+        s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        try:
+            s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+            s.bind(("::", 0))
+        finally:
+            s.close()
+        return "::"
+    except OSError:
+        return "0.0.0.0"
+
+
 if __name__ == "__main__":
     led.start()
     camera.start()
@@ -397,7 +417,8 @@ if __name__ == "__main__":
     cleanup.start()
     atexit.register(_shutdown)
     mock_note = " (MOCK mode)" if hardware.mock or camera.mock or audio.mock else ""
-    print(f"birdcam ui on http://0.0.0.0:{config['port']}{mock_note}")
+    host = _listen_host()
+    print(f"birdcam ui on port {config['port']} ({host}){mock_note}")
     # threaded=True: each MJPEG viewer holds a connection open
-    app.run(host="0.0.0.0", port=config["port"], threaded=True,
+    app.run(host=host, port=config["port"], threaded=True,
             debug=False, use_reloader=False)
