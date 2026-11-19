@@ -40,6 +40,17 @@ function fmtBytes(b) {
 
 let recStartedLocal = null; // local clock reference for the duration ticker
 
+function updateFan(f) {
+  const chip = $("chip-fan");
+  if (!f || !f.available) { chip.classList.add("hidden"); return; }
+  chip.classList.remove("hidden");
+  chip.textContent = `\u{1F300} fan ${f.on ? "on" : "off"}`;
+  chip.title = `Box fan: ${f.on ? "on" : "off"} (${f.reason})`;
+  chip.classList.toggle("fan-on", f.on);
+  $("fan-state").textContent = `Now: ${f.on ? "on" : "off"}, ${f.reason}`
+    + (f.temp != null ? `, CPU ${f.temp} °C` : "");
+}
+
 async function pollStatus() {
   try {
     const s = await api("/api/status");
@@ -53,6 +64,7 @@ async function pollStatus() {
     updateMotion(s.motion);
     updateSound(s.audio);
     updateCameraInfo(s.camera);
+    updateFan(s.fan);
   } catch (e) { /* transient; keep last values */ }
 }
 

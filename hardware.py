@@ -5,6 +5,9 @@
   Needs `dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4` in
   /boot/firmware/config.txt. LED current is linear with duty cycle:
   0-100 % -> 0-94 mA.
+- AUX: switched 12 V output (low-side switch, flyback diode, up to 1 A)
+  on hardware PWM1 / GPIO13 (physical pin 33). Used for the box fan,
+  driven fully on or off (fan.py).
 - Light sensor: VEML7700 on I2C bus 1, address 0x10, read in lux.
   Needs I2C enabled (`sudo raspi-config nonint do_i2c 0`).
 
@@ -18,6 +21,7 @@ import time
 
 PWM_CHIP = "/sys/class/pwm/pwmchip0"
 LED_CHANNEL = 0            # PWM0 = GPIO12
+AUX_CHANNEL = 1            # PWM1 = GPIO13 (12 V AUX output, the fan)
 PWM_PERIOD_NS = 40_000     # 25 kHz, inside the 20-50 kHz the RC filter expects
 
 I2C_BUS = 1
@@ -53,6 +57,25 @@ def create_hardware():
     return MockHardware() if is_mock() else RealHardware()
 
 
+def _export(channel):
+    """Export a sysfs PWM channel, start it at 0 % duty, return its path."""
+    path = f"{PWM_CHIP}/pwm{channel}"
+    if not os.path.isdir(path):
+        try:
+            _write(f"{PWM_CHIP}/export", channel)
+        except OSError:
+            pass  # already exported
+        for _ in range(40):
+            if os.path.isdir(path):
+                break
+            time.sleep(0.05)
+    _write(f"{path}/enable", 0)
+    _write(f"{path}/duty_cycle", 0)
+    _write(f"{path}/period", PWM_PERIOD_NS)
+    _write(f"{path}/enable", 1)
+    return path
+
+
 def _write(path, value, retries=20):
     # Right after export, udev needs a moment to fix the file permissions.
     for i in range(retries):
@@ -72,20 +95,12 @@ class RealHardware:
     def __init__(self):
         from smbus2 import SMBus
 
-        self._pwm = f"{PWM_CHIP}/pwm{LED_CHANNEL}"
-        if not os.path.isdir(self._pwm):
-            try:
-                _write(f"{PWM_CHIP}/export", LED_CHANNEL)
-            except OSError:
-                pass  # already exported
-            for _ in range(40):
-                if os.path.isdir(self._pwm):
-                    break
-                time.sleep(0.05)
-        _write(f"{self._pwm}/enable", 0)
-        _write(f"{self._pwm}/duty_cycle", 0)
-        _write(f"{self._pwm}/period", PWM_PERIOD_NS)
-        _write(f"{self._pwm}/enable", 1)
+        self._pwm = _export(LED_CHANNEL)
+        try:
+            self._aux = _export(AUX_CHANNEL)
+        except OSError as e:     # overlay without pin2: the LEDs still work
+            print(f"[hardware] AUX/fan output unavailable: {e}")
+            self._aux = None
 
         self.bus = SMBus(I2C_BUS)
         self._gain = _GAIN_X2
@@ -97,6 +112,17 @@ class RealHardware:
         """Set LED current as 0-100 % of the 94 mA maximum."""
         percent = max(0.0, min(100.0, float(percent)))
         _write(f"{self._pwm}/duty_cycle", int(PWM_PERIOD_NS * percent / 100))
+
+    # --- AUX (fan) ---
+
+    @property
+    def aux_available(self):
+        return self._aux is not None
+
+    def set_aux(self, on):
+        """Switch the 12 V AUX output (the fan) fully on or off."""
+        if self._aux is not None:
+            _write(f"{self._aux}/duty_cycle", PWM_PERIOD_NS if on else 0)
 
     # --- light sensor ---
 
@@ -128,6 +154,9 @@ class RealHardware:
         try:
             _write(f"{self._pwm}/duty_cycle", 0)
             _write(f"{self._pwm}/enable", 0)
+            if self._aux is not None:
+                _write(f"{self._aux}/duty_cycle", 0)
+                _write(f"{self._aux}/enable", 0)
         finally:
             self.bus.close()
 
@@ -139,9 +168,15 @@ class MockHardware:
     mock = True
     CYCLE_SECONDS = 240
 
+    aux_available = True
+
     def __init__(self):
         self._brightness = 0.0
+        self.aux_on = False
         self._t0 = time.monotonic()
+
+    def set_aux(self, on):
+        self.aux_on = bool(on)
 
     def set_led_brightness(self, percent):
         self._brightness = max(0.0, min(100.0, percent))
@@ -155,3 +190,4 @@ class MockHardware:
 
     def cleanup(self):
         self._brightness = 0.0
+        self.aux_on = False

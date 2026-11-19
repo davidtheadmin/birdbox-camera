@@ -14,6 +14,7 @@
   <div id="statusbar">
     <span class="chip" id="chip-uptime" title="Pi uptime">&#8987; –</span>
     <span class="chip" id="chip-temp" title="CPU temperature">&#127777;&#65039; –</span>
+    <span class="chip hidden" id="chip-fan" title="Box fan">&#127744; –</span>
     <span class="chip" id="chip-wifi" title="Wifi signal">&#128246; –</span>
     <span class="chip" id="chip-disk" title="Free disk space">&#128190; –</span>
     <span class="chip rec-chip hidden" id="chip-rec">&#9210; REC –</span>
@@ -230,6 +231,21 @@
         <label>Background reduction (dB) <input name="audio_denoise_db" type="number" step="1" min="3" max="40"></label>
         <label>Sound trigger level (dBFS) <input name="sound_threshold_db" type="number" step="1" min="-90" max="0"></label>
         <span class="muted flip-hint">Sound auto-record stops after the motion cooldown of quiet.</span>
+      </fieldset>
+      <fieldset>
+        <legend>Fan <span class="muted">(12 V AUX output)</span></legend>
+        <label>Mode
+          <select name="fan_mode">
+            <option value="auto">Auto (by CPU temperature)</option>
+            <option value="on">Always on</option>
+            <option value="off">Always off</option>
+          </select>
+        </label>
+        <label>On at (°C) <input name="fan_on_c" type="number" step="1" min="30" max="85"></label>
+        <label>Off at or below (°C) <input name="fan_off_c" type="number" step="1" min="25" max="80"></label>
+        <label class="check"><input name="fan_quiet_recording" type="checkbox"> Off while recording (keeps fan noise off the mic)</label>
+        <label>…unless the CPU reaches (°C) <input name="fan_max_c" type="number" step="1" min="50" max="85"></label>
+        <span class="muted flip-hint" id="fan-state">–</span>
       </fieldset>
       <fieldset>
         <legend>Cleanup <span class="muted">(deletes oldest recordings to keep the card from filling)</span></legend>

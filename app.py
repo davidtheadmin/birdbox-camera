@@ -23,6 +23,7 @@ from audio import AudioManager
 from camera import CameraManager, rotate_jpeg
 from cleanup import CleanupManager
 from config import Config
+from fan import FanController
 from hardware import create_hardware
 from ledcontrol import LedController
 from motion import MotionDetector
@@ -42,9 +43,11 @@ audio.attach_camera(camera)
 camera.audio = audio
 motion = MotionDetector(camera, config)
 cleanup = CleanupManager(config, CAPTURES_DIR, camera)
+fan = FanController(hardware, config, camera)
 
 
 def _shutdown():
+    fan.stop()
     cleanup.stop()
     motion.stop()
     camera.stop()
@@ -332,6 +335,7 @@ def api_status():
         "motion": motion.state(),
         "audio": audio.state(),
         "cleanup": cleanup.state(),
+        "fan": fan.state(),
         "mock": {"gpio": hardware.mock, "camera": camera.mock, "audio": audio.mock},
         "server_time": time.time(),
     })
@@ -415,6 +419,7 @@ if __name__ == "__main__":
     audio.start()
     motion.start()
     cleanup.start()
+    fan.start()
     atexit.register(_shutdown)
     mock_note = " (MOCK mode)" if hardware.mock or camera.mock or audio.mock else ""
     host = _listen_host()

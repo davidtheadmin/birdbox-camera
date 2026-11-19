@@ -18,7 +18,7 @@ prototype and still applies to it where it says so.
 | Camera | Camera Module 3 Wide NoIR, standard 15-pin ribbon |
 | Illumination | 6 IR LEDs in series from 12 V, op-amp constant-current sink; current set by **hardware PWM0 on GPIO12** (25 kHz, filtered to DC), 0–100 % = 0–94 mA. Driven via `/sys/class/pwm/pwmchip0` |
 | Light sensor | **VEML7700** on I2C bus 1, address 0x10, read in lux |
-| AUX | switched 12 V output on GPIO13 (PWM1), not used by the app yet |
+| AUX | switched 12 V output on GPIO13 (PWM1): the box **fan** (12 V, ~25 mm, outside the box blowing in), switched by `fan.py` |
 | Microphone | I2S MEMS mic (INMP441 or ICS-43434) on the pHAT's I2S header: BCK GPIO18, LR GPIO19, data GPIO20, L/R select to GND (left). `googlevoicehat-soundcard` overlay, fixed 48 kHz. GPIO21 (AMP) is free for a MAX98357A on the same overlay |
 
 Pi setup: `dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4`,
@@ -59,10 +59,13 @@ audio.py          AudioManager: arecord pipeline for the I2S mic, level meter,
                   .wav per recording, /audio/live stream, sound trigger
 motion.py         Motion detection by frame differencing (needs Pillow)
 cleanup.py        Pi-side card-space cleanup loop; see "Recording retention"
+fan.py            Box fan on AUX: on/off by CPU temperature with hysteresis,
+                  off while recording (mic) unless too hot
 config.py         DEFAULTS + EDITABLE validation, persisted to config.json
 status.py         uptime / CPU temp / wifi / disk
 templates/index.html, static/app.js, static/style.css
 test_cleanup.py   Plain unittest for cleanup.py (no pytest dependency)
+test_fan.py       Plain unittest for fan.py and the fan settings
 pc-archive/       PC-side archive script + systemd user timer (runs on the
                   PC, not the Pi — see "Recording retention" and its README)
 ```
@@ -133,6 +136,14 @@ git-ignored) holds recordings + `.json` sidecars with duration/fps metadata.
   power, rises ~1 dB/s) and turns it down by up to `audio_denoise_db`. On a
   birdcam2 clip it cut the 6.5–11 kHz pickup tones ~10–12 dB with a test bird
   call unchanged.
+- **Fan** (`fan.py`, Settings → Fan): `fan_mode` auto/on/off. Auto switches on
+  at `fan_on_c` (65) and off at or below `fan_off_c` (55); between the two it
+  keeps its state. `fan_quiet_recording` keeps it off while recording so the
+  I2S mic doesn't pick up the hum, unless the CPU reaches `fan_max_c` (78).
+  `config.py` enforces off < on < max. The fan is switched fully on/off (PWM1
+  duty 0 or 100 %), never PWM-speed-controlled. No CPU reading (dev laptop) =
+  off. The app switches AUX off on stop; after a crash AUX keeps its last
+  state until systemd restarts the app.
 - **Settings live in a slide-in panel** (⚙ in the header), not in the grid; the
   right column (lights, motion, sound, history) spans the full height.
 - **rpicam flags are start-up only.** Changing flip, focus or stream settings

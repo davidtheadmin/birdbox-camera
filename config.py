@@ -70,6 +70,13 @@ DEFAULTS = {
     "emergency_free_gb": 2.0,    # below this, delete unarchived recordings too
     "cleanup_interval": 300,     # seconds between checks
 
+    # --- fan on the 12 V AUX output (see fan.py) ---
+    "fan_mode": "auto",          # auto | on | off
+    "fan_on_c": 65.0,            # auto: switch on at this CPU temperature
+    "fan_off_c": 55.0,           # auto: switch off again at or below this
+    "fan_quiet_recording": 1,    # keep the fan off while recording (mic noise)...
+    "fan_max_c": 78.0,           # ...unless the CPU reaches this
+
     # --- server ---
     "port": 8080,
     "captures_dir": "captures",
@@ -117,6 +124,11 @@ EDITABLE = {
     "min_free_gb": (float, 0.5, 500.0),
     "emergency_free_gb": (float, 0.1, 500.0),
     "cleanup_interval": (int, 10, 3600),
+    "fan_mode": (str, ["auto", "on", "off"]),
+    "fan_on_c": (float, 30.0, 85.0),
+    "fan_off_c": (float, 25.0, 80.0),
+    "fan_quiet_recording": (int, 0, 1),
+    "fan_max_c": (float, 50.0, 85.0),
 }
 
 _lock = threading.Lock()
@@ -176,6 +188,16 @@ class Config:
             if trial_emergency >= trial_min:
                 msg = "emergency_free_gb must be less than min_free_gb"
                 for key in ("min_free_gb", "emergency_free_gb"):
+                    if key in applied:
+                        errors[key] = msg
+                        del applied[key]
+        fan_keys = ("fan_off_c", "fan_on_c", "fan_max_c")
+        if any(k in applied for k in fan_keys):
+            with _lock:
+                off, on, mx = (applied.get(k, self._values[k]) for k in fan_keys)
+            if not off < on < mx:
+                msg = "fan temperatures must be off < on < quiet-recording limit"
+                for key in fan_keys:
                     if key in applied:
                         errors[key] = msg
                         del applied[key]

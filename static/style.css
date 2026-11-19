@@ -267,3 +267,5 @@ label.check input { width: auto; accent-color: var(--series-1); }
   .gallery-card .gmeta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .gallery-card .gactions { flex-wrap: nowrap; gap: 4px; }
 }
+
+.chip.fan-on { color: #2a9d8f; }
