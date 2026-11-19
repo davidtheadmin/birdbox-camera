@@ -232,7 +232,12 @@ Pi never deletes a recording the PC hasn't archived yet:
   `captures/` into `~/birdcam-archive` (**never `--delete`** — the Pi prunes
   its own files; mirroring that into the archive would destroy the archive's
   entire purpose), then prunes the local archive to a 100 GB cap, oldest
-  first, never touching the last 30 days or any `.jpg`.
+  first, never touching the last 30 days or any `.jpg`. Over the cap it first
+  re-encodes eligible (>30 days) mp4s to HEVC in place (same name, ~half or
+  less the size) and drops ones shorter than 5 s or unreadable; only when
+  everything eligible is HEVC does it delete, oldest first. Compress-then-
+  delete ordering matters: deleting first would remove the freshly compressed
+  clip on the next run. `--prune-only` runs that step without the Pi.
 
 ### The handshake
 

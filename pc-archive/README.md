@@ -19,6 +19,17 @@ systemctl --user enable --now birdcam-archive.timer
 Check it: `systemctl --user list-timers birdcam-archive.timer`,
 `journalctl --user -u birdcam-archive.service`.
 
+## Over the cap: compress first, delete last
+
+Only recordings older than 30 days are ever touched. When the archive is
+over the cap, oldest first, each one that isn't HEVC yet is either deleted
+(shorter than `BIRDCAM_ARCHIVE_MIN_SECONDS`, or unreadable) or re-encoded to
+HEVC in place, same file name, until the archive is back under the cap.
+Only if everything eligible is already compressed does it delete the
+oldest. HEVC plays in mpv/VLC; Firefox on Linux doesn't play it.
+
+`--prune-only` runs just this step, without the Pi.
+
 ## Before pointing it at the real archive
 
 Test against a scratch directory first:
@@ -38,6 +49,10 @@ Pi.
 |---|---|---|
 | `BIRDCAM_ARCHIVE_DIR` | `~/birdcam-archive` | Local archive location |
 | `BIRDCAM_ARCHIVE_CAP_GB` | `100` | Prune target |
+| `BIRDCAM_ARCHIVE_COMPRESS` | `1` | Before deleting to get under the cap, re-encode old mp4s to HEVC (needs ffmpeg with libx265). `0` = delete only |
+| `BIRDCAM_ARCHIVE_CRF` | `28` | x265 quality for that: lower = better and bigger |
+| `BIRDCAM_ARCHIVE_MIN_SECONDS` | `5` | Old clips shorter than this (or unreadable) are deleted rather than compressed |
+| `BIRDCAM_PI_HOST` / `BIRDCAM_PI_PORT` | `birdcam2` / `22` | Which Pi to pull from (an `~/.ssh/config` alias works) |
 | `BIRDCAM_ARCHIVE_BWLIMIT` | unset (unlimited) | rsync `--bwlimit` in KB/s — set this if a big backlog pull visibly degrades the live stream (shared USB gadget link) |
 
 Set them in the service file's `[Service]` section (`Environment=...`) if
