@@ -144,6 +144,14 @@ git-ignored) holds recordings + `.json` sidecars with duration/fps metadata.
   duty 0 or 100 %), never PWM-speed-controlled. No CPU reading (dev laptop) =
   off. The app switches AUX off on stop; after a crash AUX keeps its last
   state until systemd restarts the app.
+- **Gallery thumbnails** for mp4s are decoded once into `.thumbcache/` (outside
+  `captures/`, so the PC archive doesn't pull them), one ffmpeg at a time,
+  single-threaded, niced, scaled to 480 px, keyframe only; the browser may cache
+  them for a day. Before this, every gallery refresh started one full 1080p
+  ffmpeg decode per thumbnail in parallel (~100 MB each); on birdcam2
+  (2026-11-19) that ran the 512 MB Pi out of memory until it hung and the
+  1-minute hardware watchdog (`RuntimeWatchdogUSec=1min`, RPi OS default)
+  reset it. cleanup.py prunes thumbnails of deleted recordings.
 - **Settings live in a slide-in panel** (⚙ in the header), not in the grid; the
   right column (lights, motion, sound, history) spans the full height.
 - **rpicam flags are start-up only.** Changing flip, focus or stream settings

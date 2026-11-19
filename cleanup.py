@@ -146,6 +146,11 @@ class CleanupManager:
                     self._cleanup_once()
                 except OSError as e:
                     print(f"[cleanup] error: {e}")
+            try:        # thumbnails of recordings deleted here or in the gallery
+                from camera import CameraManager
+                CameraManager.prune_thumbnails(self.captures_dir)
+            except (OSError, ImportError) as e:
+                print(f"[cleanup] thumbnail prune: {e}")
             self._stop.wait(interval)
 
     def _cleanup_once(self):

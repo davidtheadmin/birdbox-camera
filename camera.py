@@ -35,6 +35,12 @@ import picam
 # whichever is higher). Picamera2 backend only.
 IDLE_LIVE_FPS = 2
 
+# Gallery thumbnails for mp4s: decoded once, then served from here. Kept
+# outside captures/ so the PC archive's rsync doesn't pull them.
+THUMB_CACHE = Path(__file__).parent / ".thumbcache"
+THUMB_WIDTH = 480
+_THUMB_LOCK = threading.Lock()
+
 JPEG_SOI = b"\xff\xd8"
 JPEG_EOI = b"\xff\xd9"
 
@@ -611,17 +617,64 @@ class CameraManager:
 
     @staticmethod
     def mp4_thumbnail(path):
-        """Extract the first frame of an mp4 as JPEG bytes via ffmpeg."""
+        """First frame of an mp4 (or raw .h264) as a small JPEG.
+
+        Finished mp4s are cached in THUMB_CACHE, so each is decoded once.
+        Decoding is serialised (one ffmpeg at a time), single-threaded, niced
+        and scaled down: the gallery asks for several thumbnails in the same
+        second, and parallel full-size 1080p decodes ran the 512 MB Pi 3A+
+        out of memory until it hung and the watchdog reset it (2026-11-19)."""
+        path = Path(path)
+        cache = None
+        if path.suffix == ".mp4":
+            try:
+                st = path.stat()
+            except OSError:
+                return None
+            cache = THUMB_CACHE / f"{path.stem}-{int(st.st_mtime)}-{st.st_size}.jpg"
+            try:
+                return cache.read_bytes()
+            except OSError:
+                pass
         if shutil.which("ffmpeg") is None:
             return None
-        try:
-            r = subprocess.run(
-                ["ffmpeg", "-loglevel", "error", "-i", str(path),
-                 "-frames:v", "1", "-f", "mjpeg", "pipe:1"],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        except OSError:
-            return None
-        return r.stdout or None
+        with _THUMB_LOCK:
+            if cache is not None and cache.exists():   # made while we waited
+                return cache.read_bytes()
+            try:
+                r = subprocess.run(
+                    ["nice", "-n", "10", "ffmpeg", "-loglevel", "error", "-threads", "1",
+                     "-skip_frame", "nokey", "-i", str(path), "-frames:v", "1",
+                     "-vf", f"scale={THUMB_WIDTH}:-2", "-q:v", "5",
+                     "-f", "mjpeg", "pipe:1"],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30)
+            except (OSError, subprocess.TimeoutExpired):
+                return None
+        frame = r.stdout or None
+        if frame and cache is not None:
+            try:
+                THUMB_CACHE.mkdir(parents=True, exist_ok=True)
+                for old in THUMB_CACHE.glob(f"{path.stem}-*.jpg"):   # stale versions
+                    old.unlink(missing_ok=True)
+                tmp = cache.with_suffix(".tmp")
+                tmp.write_bytes(frame)
+                tmp.replace(cache)
+            except OSError:
+                pass
+        return frame
+
+    @staticmethod
+    def prune_thumbnails(captures_dir):
+        """Drop cached thumbnails whose recording no longer exists."""
+        if not THUMB_CACHE.is_dir():
+            return 0
+        alive = {p.stem for p in Path(captures_dir).glob("*.mp4")}
+        removed = 0
+        for t in THUMB_CACHE.glob("*.jpg"):
+            if t.name.rsplit("-", 2)[0] not in alive:
+                t.unlink(missing_ok=True)
+                removed += 1
+        return removed
 
     def replay_stream(self, path, fps):
         interval = 1.0 / max(fps, 1)

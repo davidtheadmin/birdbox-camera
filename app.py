@@ -274,7 +274,10 @@ def thumb(name):
             frame = rotate_jpeg(frame, rotate)
     if frame is None:
         abort(404)
-    return Response(frame, mimetype="image/jpeg")
+    resp = Response(frame, mimetype="image/jpeg")
+    if path.suffix == ".mp4":       # finished recording: the thumbnail won't change
+        resp.headers["Cache-Control"] = "private, max-age=86400"
+    return resp
 
 
 @app.route("/replay/<name>")
