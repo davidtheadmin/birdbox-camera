@@ -315,11 +315,15 @@ laptop. Test `birdcam-archive.sh` with `--dry-run` against a scratch
    and the "to mp4" button is disabled (`sudo apt install ffmpeg`). Software
    `libx264` on a Zero 2 W is well under real-time; the hardware encoder
    (`h264_v4l2m2m`) is tried first.
-5. **Persistent journald doesn't work.** `/var/log/journal` stays empty despite
-   `Storage=persistent`, a valid committed machine-id, no tmpfs over `/var/log`,
-   no config drop-ins, and a writable filesystem. Unresolved. Workaround: a cron
-   heartbeat writing to `/home/birdcam/heartbeat.log` every minute — gaps mark
-   reboots.
+5. **Persistent journald — solved.** Raspberry Pi OS ships
+   `/usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf` with
+   `Storage=volatile` (to spare the SD card), which overrides both
+   `/etc/systemd/journald.conf` and an existing `/var/log/journal`. Fix: a later
+   drop-in, `/etc/systemd/journald.conf.d/99-persistent.conf` with
+   `Storage=persistent` and `SystemMaxUse=50M`, then restart journald and
+   `journalctl --flush`. Found on birdcam2 (2026-11-19); the same drop-in is
+   almost certainly what defeated the Zero. `systemd-analyze cat-config
+   systemd/journald.conf` shows every file that applies.
 6. **Power.** Everything runs off one USB cable. `vcgencmd get_throttled` has
    read `0x0` through a full night with LEDs on, so it's holding, but any
    unexplained hang should check this first. Rebooting the 4B hard-cuts the
